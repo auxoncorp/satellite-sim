@@ -1,0 +1,43 @@
+SCREEN AUTO AUTO 1.0
+
+GLOBAL_SUBSETTING LABELVALUELIMITSBAR 0:0 TEXTCOLOR white
+GLOBAL_SUBSETTING LABELVALUE 0 TEXTCOLOR white
+GLOBAL_SETTING LABELLED LED_COLOR false GREEN
+GLOBAL_SETTING LABELLED LED_COLOR true RED
+
+TABBOOK
+  TABITEM GALAXY
+    TITLE "GALAXY Health and Status"
+
+    MATRIXBYCOLUMNS 3 1
+      <%= render "../../lib/_hs.txt", locals: {sat_target_name: "GALAXY-1"} %>
+      <%= render "../../lib/_hs.txt", locals: {sat_target_name: "GALAXY-2"} %>
+      <%= render "../../lib/_hs.txt", locals: {sat_target_name: "GALAXY-3"} %>
+      <%= render "../../lib/_hs.txt", locals: {sat_target_name: "GALAXY-4"} %>
+      <%= render "../../lib/_hs.txt", locals: {sat_target_name: "GALAXY-5"} %>
+      <%= render "../../lib/_hs.txt", locals: {sat_target_name: "GALAXY-6"} %>
+    END
+  END
+
+  TABITEM CLUSTER
+    TITLE "CLUSTER Health and Status"
+
+    MATRIXBYCOLUMNS 3 1
+      <%= render "../../lib/_hs.txt", locals: {sat_target_name: "CLUSTER-1"} %>
+      <%= render "../../lib/_hs.txt", locals: {sat_target_name: "CLUSTER-2"} %>
+      <%= render "../../lib/_hs.txt", locals: {sat_target_name: "CLUSTER-3"} %>
+    END
+  END
+
+  TABITEM GOES
+    TITLE "GOES Health and Status"
+
+    MATRIXBYCOLUMNS 3 1
+      <%= render "../../lib/_hs.txt", locals: {sat_target_name: "GOES-1"} %>
+      <%= render "../../lib/_hs.txt", locals: {sat_target_name: "GOES-2"} %>
+      <%= render "../../lib/_hs.txt", locals: {sat_target_name: "GOES-3"} %>
+      <%= render "../../lib/_hs.txt", locals: {sat_target_name: "GOES-4"} %>
+      <%= render "../../lib/_hs.txt", locals: {sat_target_name: "GOES-5"} %>
+    END
+  END
+END

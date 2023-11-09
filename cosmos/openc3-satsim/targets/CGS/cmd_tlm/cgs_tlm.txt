@@ -1,0 +1,52 @@
+<% (0..15).each do |i| %>
+  TELEMETRY <%= target_name %> IR_EVENT_<%= i %> LITTLE_ENDIAN "IR event <%= i %>"
+    ACCESSOR JsonAccessor
+    #################################################
+    # framing/header
+    #################################################
+    APPEND_ID_ITEM TYPE 8 UINT 3 "Message type"
+      KEY $.msg_type
+    APPEND_ITEM SEQNUM 64 UINT "Seqnum"
+      KEY $.seqnum
+    APPEND_ITEM TIMESEC 64 INT "Timestamp seconds"
+      KEY $.timestamp.sec
+    APPEND_ITEM TIMEUS 32 UINT "Timestamp microseconds"
+      KEY $.timestamp.usec
+    ITEM TIMESTAMP 0 0 DERIVED "Timestamp"
+      READ_CONVERSION unix_time_conversion.rb TIMESEC TIMEUS
+    ITEM PACKET_TIME 0 0 DERIVED "Packet time based on TIMESTAMP"
+      READ_CONVERSION unix_time_conversion.rb TIMESEC TIMEUS
+    #################################################
+    # event
+    #################################################
+    APPEND_ID_ITEM GROUND_TRUTH_ID 32 UINT <%= i %> "Ground truth ID"
+      KEY $.ground_truth_id
+    APPEND_ITEM POS_X 64 FLOAT "Position X"
+      KEY $.position[0]
+      UNITS METERS M
+      FORMAT_STRING "%0.3f"
+    APPEND_ITEM POS_Y 64 FLOAT "Position Y"
+      KEY $.position[1]
+      UNITS METERS M
+      FORMAT_STRING "%0.3f"
+    APPEND_ITEM POS_Z 64 FLOAT "Position Z"
+      KEY $.position[2]
+      UNITS METERS M
+      FORMAT_STRING "%0.3f"
+    APPEND_ITEM VEL_X 64 FLOAT "Velocity X"
+      KEY $.velocity[0]
+      UNITS METERS_PER_SECOND MPS
+      FORMAT_STRING "%0.1f"
+    APPEND_ITEM VEL_Y 64 FLOAT "Velocity Y"
+      KEY $.velocity[1]
+      UNITS METERS_PER_SECOND MPS
+      FORMAT_STRING "%0.1f"
+    APPEND_ITEM VEL_Z 64 FLOAT "Velocity Z"
+      KEY $.velocity[2]
+      UNITS METERS_PER_SECOND MPS
+      FORMAT_STRING "%0.1f"
+    APPEND_ITEM INTENSITY 64 FLOAT "Intensity"
+      KEY $.intensity.candelas
+      UNITS CANDELAS C
+      FORMAT_STRING "%0.1f"
+<% end %>

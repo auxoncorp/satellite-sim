@@ -1,0 +1,37 @@
+name: CI
+
+on: [push]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: moonrepo/setup-rust@v0
+
+      - name: Clippy
+        run: cargo clippy --tests --all-features -- -W clippy::all -D warnings
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Doc Generation
+        run: cargo doc --workspace --bins --examples --all-features --no-deps
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: moonrepo/setup-rust@v0
+
+      - name: Debug build
+        run: cargo build
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: moonrepo/setup-rust@v0
+
+      - name: Test
+        run: cargo test --all-features -- --test-threads=1

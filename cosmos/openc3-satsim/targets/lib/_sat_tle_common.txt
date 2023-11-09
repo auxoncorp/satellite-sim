@@ -1,0 +1,11 @@
+  ACCESSOR JsonAccessor
+  APPEND_ID_ITEM TYPE 8 UINT 2 "Message type"
+    KEY $.msg_type
+  APPEND_ID_ITEM SATELLITE_ID 64 UINT <%= sat_id %> "Satellite ID"
+    KEY $.sat_id
+  APPEND_ITEM SATELLITE_NAME 128 STRING "Satellite name"
+    KEY $.sat_name
+  APPEND_ITEM LINE1 80 STRING "TLE line1"
+    KEY $.line1
+  APPEND_ITEM LINE2 80 STRING "TLE line2"
+    KEY $.line2

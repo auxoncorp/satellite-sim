@@ -1,0 +1,52 @@
+[package]
+name = "fsw"
+version = "0.1.0"
+edition = "2021"
+default-run = "fsw"
+license = "Apache-2.0"
+repository = "https://github.com/auxoncorp/satellite-sim"
+
+[[bin]]
+name = "fsw"
+path = "src/bin/fsw.rs"
+
+[lib]
+name = "fsw_lib"
+path = "src/lib.rs"
+
+[dependencies]
+nav-types = { version = "0.5.2", features = ["serde"] }
+types42 = { path = "../types42" }
+protocol42 = { path = "../protocol42" }
+nalgebra = { version = "0.32", features = ["serde-serialize"] }
+parry3d-f64 = "0.13"
+thiserror = "1.0.43"
+clap = { version = "4.3", features = ["derive"] }
+ctrlc = "3.4"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+modality-api = "0.2"
+modality-ingest-client = "0.3"
+modality-auth-token = "0.1"
+modality-mutator-protocol = "0.2"
+modality-mutation-plane = "0.2"
+modality-mutation-plane-client = "0.2"
+tokio = { version = "1", features = ["rt"] }
+chrono = { version = "0.4", default-features = false }
+ordered-float = "3.7.0"
+rand = "0.8.5"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.7"
+oorandom = "11.1"
+url = { version = "2.1", features = ["serde"] }
+
+# TODO - unfork after nalgebra 0.32 makes it in
+#kiss3d = "0.35"
+[dependencies.kiss3d]
+git = "https://github.com/auxoncorp/kiss3d.git"
+branch = "update-nalgebra"
+
+[dev-dependencies]
+approx = "0.5"
+indoc = "2"

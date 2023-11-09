@@ -1,0 +1,156 @@
+  ACCESSOR JsonAccessor
+  #################################################
+  # framing/header
+  #################################################
+  APPEND_ID_ITEM TYPE 8 UINT 1 "Message type"
+    KEY $.msg_type
+  APPEND_ITEM SEQNUM 64 UINT "Seqnum"
+    KEY $.seqnum
+  APPEND_ID_ITEM SATELLITE_ID 64 UINT <%= sat_id %> "Satellite ID"
+    KEY $.sat_id
+  APPEND_ITEM SATELLITE_NAME 128 STRING "Satellite name"
+    KEY $.sat_name
+  APPEND_ITEM SAT_SEND_TIMESEC 64 INT "Satellite send timestamp seconds"
+    KEY $.sat_send_timestamp.sec
+  APPEND_ITEM SAT_SEND_TIMEUS 32 UINT "Satellite send timestamp microseconds"
+    KEY $.sat_send_timestamp.usec
+  ITEM SAT_SEND_TIME 0 0 DERIVED "Satellite send time"
+    READ_CONVERSION unix_time_conversion.rb SAT_SEND_TIMESEC SAT_SEND_TIMEUS
+  APPEND_ITEM RELAY_GROUND_STATION_ID 32 UINT "Relay ground station"
+    KEY $.relay_ground_station_id
+    STATE GSFC 1
+    STATE SOUTH_POINT 2
+    STATE DONGARA 3
+    STATE SANTIAGO 4
+    STATE SANSA_EO 5
+    STATE UNKNOWN ANY
+  APPEND_ITEM RELAY_GROUND_STATION_TIMESEC 64 INT "Relay ground station timestamp seconds"
+    KEY $.relay_timestamp.sec
+  APPEND_ITEM RELAY_GROUND_STATION_TIMEUS 32 UINT "Relay ground station timestamp microseconds"
+    KEY $.relay_timestamp.usec
+  ITEM RELAY_GROUND_STATION_TIME 0 0 DERIVED "Relay ground station time"
+    READ_CONVERSION unix_time_conversion.rb RELAY_GROUND_STATION_TIMESEC RELAY_GROUND_STATION_TIMEUS
+  ITEM PACKET_TIME 0 0 DERIVED "Packet time based on SAT_SEND_TIME"
+    READ_CONVERSION unix_time_conversion.rb SAT_SEND_TIMESEC SAT_SEND_TIMEUS
+  #################################################
+  # gps
+  #################################################
+  APPEND_ITEM GPS_LAT 64 FLOAT "GPS WGS84 latitude"
+    KEY $.gps.latitude
+    UNITS RADIANS R
+  APPEND_ITEM GPS_LON 64 FLOAT "GPS WGS84 longitude"
+    KEY $.gps.longitude
+    UNITS RADIANS R
+  APPEND_ITEM GPS_ALT 64 FLOAT "GPS WGS84 altitude"
+    KEY $.gps.altitude
+    UNITS METERS M
+    FORMAT_STRING "%0.1f"
+  #################################################
+  # imu
+  #################################################
+  APPEND_ITEM IMU_ANG_VEL_X 64 FLOAT "IMU - angular velocity X"
+    KEY $.imu.angular_velocity[0].radians_per_second
+    UNITS RADIANS_PER_SECOND RPS
+    FORMAT_STRING "%0.3f"
+  APPEND_ITEM IMU_ANG_VEL_Y 64 FLOAT "IMU - angular velocity Y"
+    KEY $.imu.angular_velocity[1].radians_per_second
+    UNITS RADIANS_PER_SECOND RPS
+    FORMAT_STRING "%0.3f"
+  APPEND_ITEM IMU_ANG_VEL_Z 64 FLOAT "IMU - angular velocity Z"
+    KEY $.imu.angular_velocity[2].radians_per_second
+    UNITS RADIANS_PER_SECOND RPS
+    FORMAT_STRING "%0.3f"
+  APPEND_ITEM IMU_ACCEL_X 64 FLOAT "IMU - acceleration X"
+    KEY $.imu.acceleration[0].meters_per_second_squared
+    UNITS METERS_PER_SECOND_SQUARED MPS2
+    FORMAT_STRING "%0.3f"
+  APPEND_ITEM IMU_ACCEL_Y 64 FLOAT "IMU - acceleration Y"
+    KEY $.imu.acceleration[1].meters_per_second_squared
+    UNITS METERS_PER_SECOND_SQUARED MPS2
+    FORMAT_STRING "%0.3f"
+  APPEND_ITEM IMU_ACCEL_Z 64 FLOAT "IMU - acceleration Z"
+    KEY $.imu.acceleration[2].meters_per_second_squared
+    UNITS METERS_PER_SECOND_SQUARED MPS2
+    FORMAT_STRING "%0.3f"
+  APPEND_ITEM IMU_MAGF_X 64 FLOAT "IMU - magnetic flux density X"
+    KEY $.imu.magnetic_flux_density[0].teslas
+    UNITS TESLAS T
+    FORMAT_STRING "%0.3f"
+  APPEND_ITEM IMU_MAGF_Y 64 FLOAT "IMU - magnetic flux density Y"
+    KEY $.imu.magnetic_flux_density[1].teslas
+    UNITS TESLAS T
+    FORMAT_STRING "%0.3f"
+  APPEND_ITEM IMU_MAGF_Z 64 FLOAT "IMU - magnetic flux density Z"
+    KEY $.imu.magnetic_flux_density[2].teslas
+    UNITS TESLAS T
+    FORMAT_STRING "%0.3f"
+  #################################################
+  # power_status
+  #################################################
+  APPEND_ITEM POWER_BATTERY_CHARGE 64 FLOAT "Power subsystem - battery charge"
+    KEY $.power_status.battery_charge.coulombs
+    UNITS COULOMBS C
+    FORMAT_STRING "%0.0f"
+  APPEND_ITEM POWER_BATTERY_CHARGE_RATIO 64 FLOAT "Power subsystem - battery charge ratio"
+    KEY $.power_status.battery_charge_ratio.ratio
+    FORMAT_STRING "%0.1f"
+    LIMITS DEFAULT 1 ENABLED 0.5 0.7 1.01 1.1
+  APPEND_ITEM POWER_SOLAR_PANEL_ILLUM 64 FLOAT "Power subsystem - solar panel illumination"
+    KEY $.power_status.solar_panel_illumination.ratio
+    FORMAT_STRING "%0.1f"
+  APPEND_ITEM POWER_TEMP 64 FLOAT "Power subsystem - temperature"
+    KEY $.power_status.temperature.degrees_celsius
+    UNITS CELCIUS C
+    FORMAT_STRING "%0.3f"
+    LIMITS DEFAULT 1 ENABLED -40.0 -20.0 20.0 40.0 -10.0 10.0
+  APPEND_ITEM POWER_OUT_OF_SYNC 32 UINT "Power subsystem - error register out-of-sync"
+    KEY $.power_status.error_register.out_of_sync
+  #################################################
+  # imu_status
+  #################################################
+  APPEND_ITEM IMU_TEMP 64 FLOAT "IMU subsystem - temperature"
+    KEY $.imu_status.temperature.degrees_celsius
+    UNITS CELCIUS C
+    FORMAT_STRING "%0.3f"
+    LIMITS DEFAULT 1 ENABLED -40.0 -20.0 20.0 40.0 -10.0 10.0
+  APPEND_ITEM IMU_OUT_OF_SYNC 32 UINT "IMU subsystem - error register out-of-sync"
+    KEY $.imu_status.error_register.out_of_sync
+  APPEND_ITEM IMU_DEGRADED 32 UINT "IMU subsystem - error register degraded"
+    KEY $.imu_status.error_register.degraded
+  APPEND_ITEM IMU_DATA_INCONSISTENCY 32 UINT "IMU subsystem - error register data_inconsistency"
+    KEY $.imu_status.error_register.data_inconsistency
+  #################################################
+  # vision_status
+  #################################################
+  APPEND_ITEM VISION_SCANNER_TEMP 64 FLOAT "Vision subsystem - scanner camera temperature"
+    KEY $.vision_status.scanner_camera_temperature.degrees_celsius
+    UNITS CELCIUS C
+    FORMAT_STRING "%0.3f"
+    LIMITS DEFAULT 1 ENABLED -40.0 -20.0 20.0 40.0 -10.0 10.0
+  APPEND_ITEM VISION_FOCUS_TEMP 64 FLOAT "Vision subsystem - focus camera temperature"
+    KEY $.vision_status.focus_camera_temperature.degrees_celsius
+    UNITS CELCIUS C
+    FORMAT_STRING "%0.3f"
+    LIMITS DEFAULT 1 ENABLED -40.0 -20.0 20.0 40.0 -10.0 10.0
+  APPEND_ITEM VISION_OUT_OF_SYNC 32 UINT "Vision subsystem - error register out-of-sync"
+    KEY $.vision_status.error_register.out_of_sync
+  #################################################
+  # comms_status
+  #################################################
+  APPEND_ITEM COMMS_TEMP 64 FLOAT "Comms subsystem - temperature"
+    KEY $.comms_status.temperature.degrees_celsius
+    UNITS CELCIUS C
+    FORMAT_STRING "%0.3f"
+    LIMITS DEFAULT 1 ENABLED -40.0 -20.0 20.0 40.0 -10.0 10.0
+  APPEND_ITEM COMMS_OUT_OF_SYNC 32 UINT "Comms subsystem - error register out-of-sync"
+    KEY $.comms_status.error_register.out_of_sync
+  #################################################
+  # compute_status
+  #################################################
+  APPEND_ITEM COMPUTE_TEMP 64 FLOAT "Compute subsystem - temperature"
+    KEY $.compute_status.temperature.degrees_celsius
+    UNITS CELCIUS C
+    FORMAT_STRING "%0.3f"
+    LIMITS DEFAULT 1 ENABLED -40.0 -20.0 20.0 40.0 -10.0 10.0
+  APPEND_ITEM COMPUTE_OUT_OF_SYNC 32 UINT "Compute subsystem - error register out-of-sync"
+    KEY $.compute_status.error_register.out_of_sync

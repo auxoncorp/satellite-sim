@@ -1,0 +1,23 @@
+[package]
+name = "tools"
+version = "0.1.0"
+edition = "2021"
+authors = ["Jon Lamb <jon@auxon.io>"]
+
+[[bin]]
+name = "log-css"
+path = "src/bin/log_css.rs"
+
+[[bin]]
+name = "temperature-profile"
+path = "src/bin/temperature_profile.rs"
+
+[[bin]]
+name = "power-profile"
+path = "src/bin/power_profile.rs"
+
+[dependencies]
+types42 = { path = "../types42" }
+protocol42 = { path = "../protocol42" }
+fsw = { path = "../fsw" }
+clap = { version = "4.3", features = ["derive"] }

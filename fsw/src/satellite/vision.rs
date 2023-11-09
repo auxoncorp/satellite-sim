@@ -1,0 +1,948 @@
+use modality_api::TimelineId;
+use na::{Isometry3, Point3, Translation3, UnitQuaternion, Vector3};
+use parry3d_f64::{query::PointQuery, shape::Cone};
+use serde::Serialize;
+use std::collections::HashMap;
+use tracing::{debug, warn};
+use types42::prelude::GpsIndex;
+
+use crate::{
+    channel::{Receiver, Sender, TracedMessage},
+    modality::{kv, AttrsBuilder, MODALITY},
+    point_failure::{PointFailure, PointFailureConfig},
+    satellite::{SatelliteEnvironment, SatelliteId, SatelliteSharedState},
+    system::{CameraSourceId, Detections, IREvent},
+    units::{Angle, ElectricPotential, LuminousIntensity, Temperature, Time},
+    SimulationComponent,
+};
+
+use super::temperature_sensor::{TemperatureSensor, TemperatureSensorConfig};
+
+const PRIMARY_GPS: GpsIndex = 0;
+
+/// The vision subsystem models a wide-angle "scanner" camera
+/// and a narrow-angle "focus" camera using conical
+/// viewing volumes.
+///
+/// The focus camera automatically targets the most intense object in the
+/// field of view of the scanner camera.
+///
+/// It reports IREvent's when objects are within the
+/// field of view.
+///
+/// Simplifications:
+/// * Conical FOV: lets us ignore the spacecraft attitude
+/// * Optical axis originates at the host spacecraft's body frame: requires no additional extrinsics transformations
+/// * Working distance is from spacecraft origin to center of the Earth: so we can ignore objects on the
+///   other side of the Earth
+#[derive(Debug)]
+pub struct VisionSubsystem {
+    config: VisionConfig,
+    timeline: TimelineId,
+
+    sim_iters_per_interval: u64,
+    sim_iters_in_cur_interval: u64,
+
+    scanner_tracker: ObjectTracker,
+    focus_tracker: ObjectTracker,
+
+    in_focus_object_ids: Option<(i64, CameraSourceId)>,
+
+    scanner_cam_temp_sensor: TemperatureSensor,
+    focus_cam_temp_sensor: TemperatureSensor,
+
+    error_register: VisionErrorRegister,
+
+    active_cooling: Option<PointFailure<Temperature>>,
+    scanner_camera_offline: Option<PointFailure<ElectricPotential>>,
+    focus_camera_offline: Option<PointFailure<ElectricPotential>>,
+    focus_camera_gimbal: Option<PointFailure<Temperature>>,
+    #[allow(unused)]
+    watchdog_out_of_sync: Option<PointFailure<Time>>,
+    watchdog_out_of_sync_threshold: Option<Time>,
+
+    event_tx: Sender<Detections>,
+    cmd_rx: Receiver<VisionCommand>,
+    res_tx: Sender<VisionResponse>,
+}
+
+#[derive(Debug, Clone)]
+pub struct VisionConfig {
+    pub scanner_field_of_view_angle: Angle,
+    pub focus_field_of_view_angle: Angle,
+    pub update_interval: Time,
+    pub focus_camera_temperature_sensor_config: TemperatureSensorConfig,
+    pub scanner_camera_temperature_sensor_config: TemperatureSensorConfig,
+    pub focus_camera_disabled: bool,
+    pub fault_config: Option<VisionFaultConfig>,
+}
+
+/// Parameters for the vision subsystem point failures.
+/// See the requirements doc, sections 1.3.4.12-1.3.4.14.
+#[derive(Debug, Clone, Default)]
+pub struct VisionFaultConfig {
+    /// Parameters for the active cooling point failure.
+    /// See sections 1.3.4.12 of the requirements doc.
+    /// This point failure is motivated by the scanner camera temperature.
+    pub active_cooling: Option<PointFailureConfig<Temperature>>,
+
+    /// Parameters for the scanner camera outright failure point failure.
+    /// See sections 1.3.4.13 of the requirements doc.
+    /// This point failure is motivated by power supply voltage.
+    pub scanner_camera_offline: Option<PointFailureConfig<ElectricPotential>>,
+
+    /// Parameters for the focus camera outright failure point failure.
+    /// See sections 1.3.4.13 of the requirements doc.
+    /// This point failure is motivated by power supply voltage.
+    pub focus_camera_offline: Option<PointFailureConfig<ElectricPotential>>,
+
+    /// Parameters for the focus camera gimbal point failure.
+    /// See sections 1.3.4.14 of the requirements doc.
+    /// This point failure is motivated by the focus camera temperature.
+    pub focus_camera_gimbal: Option<PointFailureConfig<Temperature>>,
+
+    /// Switch the focus camera temperature sensor model to constant after
+    /// a hard reset occurs.
+    /// This can be used to prevent the temperature-motivated
+    /// point failures from recurring.
+    pub focus_camera_constant_temperature_after_reset: Option<Temperature>,
+
+    /// Switch the scanner camera temperature sensor model to constant after
+    /// a hard reset occurs.
+    /// This can be used to prevent the temperature-motivated
+    /// point failures from recurring.
+    pub scanner_camera_constant_temperature_after_reset: Option<Temperature>,
+
+    /// Parameters for the data watchdog execution out-of-sync point failure.
+    /// See sections 1.3.4.2 of the requirements doc.
+    pub watchdog_out_of_sync: Option<PointFailureConfig<Time>>,
+
+    /// Whether the `watchdog_out_of_sync` point failure
+    /// is recurring or not. Defaults to false.
+    pub watchdog_out_of_sync_recurring: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+pub enum VisionCommand {
+    GetStatus,
+    PrioritizeIrEvent(CameraSourceId),
+}
+
+impl TracedMessage for VisionCommand {
+    fn attrs(&self) -> Vec<(modality_api::AttrKey, modality_api::AttrVal)> {
+        match self {
+            VisionCommand::GetStatus => vec![kv("event.name", "get_status")],
+            VisionCommand::PrioritizeIrEvent(source_id) => {
+                let mut kvs = vec![
+                    kv("event.name", "prioritize_ir_event"),
+                    kv("event.source_type", source_id.source_type()),
+                ];
+                if let Some(source_id) = source_id.source_id() {
+                    kvs.push(kv("event.source_id", source_id));
+                }
+                kvs
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum VisionResponse {
+    Status(VisionStatus),
+}
+
+impl TracedMessage for VisionResponse {
+    fn attrs(&self) -> Vec<(modality_api::AttrKey, modality_api::AttrVal)> {
+        match self {
+            VisionResponse::Status(vision_status) => {
+                let mut b = AttrsBuilder::new();
+                b.kv("event.name", "vision_status");
+                b.with_prefix("event", |b| vision_status.to_attrs(b));
+                b.build()
+            }
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Serialize)]
+pub struct VisionStatus {
+    pub scanner_camera_temperature: Temperature,
+    pub focus_camera_temperature: Temperature,
+    pub error_register: VisionErrorRegister,
+}
+
+impl VisionStatus {
+    pub fn to_attrs(&self, b: &mut AttrsBuilder) {
+        b.kv(
+            "scanner_camera.temperature",
+            self.scanner_camera_temperature.as_degrees_celsius(),
+        );
+        b.kv(
+            "focus_camera.temperature",
+            self.focus_camera_temperature.as_degrees_celsius(),
+        );
+        b.kv("error.out_of_sync", self.error_register.out_of_sync);
+    }
+}
+
+#[derive(Debug, Copy, Clone, Serialize)]
+pub struct VisionErrorRegister {
+    /// Watchdog detected out-of-sync execution, subsystem is halted                                                           
+    pub out_of_sync: bool,
+}
+
+impl VisionSubsystem {
+    pub const COMPONENT_NAME: &'static str = "vision_subsystem";
+
+    pub fn new(
+        config: VisionConfig,
+        event_tx: Sender<Detections>,
+        cmd_rx: Receiver<VisionCommand>,
+        res_tx: Sender<VisionResponse>,
+    ) -> Self {
+        debug_assert!(config.update_interval.as_secs() > 0.0);
+
+        let scanner_cam_temp_sensor =
+            TemperatureSensor::new(config.scanner_camera_temperature_sensor_config);
+        let focus_cam_temp_sensor =
+            TemperatureSensor::new(config.focus_camera_temperature_sensor_config);
+
+        let active_cooling = config
+            .fault_config
+            .as_ref()
+            .and_then(|c| c.active_cooling.as_ref())
+            .map(|pfc| PointFailure::new(pfc.clone()));
+        let scanner_camera_offline = config
+            .fault_config
+            .as_ref()
+            .and_then(|c| c.scanner_camera_offline.as_ref())
+            .map(|pfc| PointFailure::new(pfc.clone()));
+        let focus_camera_offline = config
+            .fault_config
+            .as_ref()
+            .and_then(|c| c.focus_camera_offline.as_ref())
+            .map(|pfc| PointFailure::new(pfc.clone()));
+        let focus_camera_gimbal = config
+            .fault_config
+            .as_ref()
+            .and_then(|c| c.focus_camera_gimbal.as_ref())
+            .map(|pfc| PointFailure::new(pfc.clone()));
+        let watchdog_out_of_sync = config
+            .fault_config
+            .as_ref()
+            .and_then(|c| c.watchdog_out_of_sync.as_ref())
+            .map(|pf_config| PointFailure::new(pf_config.clone()));
+        let watchdog_out_of_sync_threshold = watchdog_out_of_sync.as_ref().map(|pf| pf.threshold());
+
+        Self {
+            config,
+            timeline: TimelineId::allocate(),
+            sim_iters_per_interval: 0, // Set on first call to step using dt
+            sim_iters_in_cur_interval: 0,
+            scanner_tracker: ObjectTracker::new(CameraSourceIdTracker::new_scanner()),
+            focus_tracker: ObjectTracker::new(CameraSourceIdTracker::new_focus()),
+            in_focus_object_ids: None,
+            scanner_cam_temp_sensor,
+            focus_cam_temp_sensor,
+            error_register: VisionErrorRegister { out_of_sync: false },
+            active_cooling,
+            scanner_camera_offline,
+            focus_camera_offline,
+            focus_camera_gimbal,
+            watchdog_out_of_sync,
+            watchdog_out_of_sync_threshold,
+            event_tx,
+            cmd_rx,
+            res_tx,
+        }
+    }
+
+    /// Returns true if the step loop should be run for the given sim iteration
+    fn downsample_step(&mut self, dt: Time) -> bool {
+        if self.sim_iters_per_interval == 0 {
+            debug_assert!(dt < self.config.update_interval);
+            self.sim_iters_per_interval = (self.config.update_interval / dt).as_f64() as u64;
+            debug_assert!(self.sim_iters_per_interval != 0);
+        }
+
+        // Downsample to update_interval
+        self.sim_iters_in_cur_interval += 1;
+        if self.sim_iters_in_cur_interval != self.sim_iters_per_interval {
+            false
+        } else {
+            self.sim_iters_in_cur_interval = 0;
+            true
+        }
+    }
+
+    fn init_fault_models(&mut self, id: &SatelliteId) {
+        let base_ctx = [
+            ("satellite_name", id.name),
+            ("component_name", Self::COMPONENT_NAME),
+        ];
+
+        if let Some(pf) = self.active_cooling.as_mut() {
+            pf.set_context(base_ctx);
+            pf.add_context("name", "active_cooling");
+        }
+        if let Some(pf) = self.scanner_camera_offline.as_mut() {
+            pf.set_context(base_ctx);
+            pf.add_context("name", "scanner_camera_offline");
+        }
+        if let Some(pf) = self.focus_camera_offline.as_mut() {
+            pf.set_context(base_ctx);
+            pf.add_context("name", "focus_camera_offline");
+        }
+        if let Some(pf) = self.focus_camera_gimbal.as_mut() {
+            pf.set_context(base_ctx);
+            pf.add_context("name", "focus_camera_gimbal");
+        }
+        if let Some(pf) = self.watchdog_out_of_sync.as_mut() {
+            pf.set_context(base_ctx);
+            pf.add_context("name", "watchdog_out_of_sync");
+        }
+    }
+
+    fn update_fault_models(
+        &mut self,
+        dt: Time,
+        rel_time: Time,
+        power_supply_voltage: ElectricPotential,
+    ) {
+        if let Some(pf) = self.active_cooling.as_mut() {
+            pf.update(dt, self.scanner_cam_temp_sensor.temperature());
+        }
+
+        if let Some(pf) = self.scanner_camera_offline.as_mut() {
+            pf.update(dt, power_supply_voltage);
+        }
+
+        if let Some(pf) = self.focus_camera_offline.as_mut() {
+            pf.update(dt, power_supply_voltage);
+        }
+
+        if let Some(pf) = self.focus_camera_gimbal.as_mut() {
+            pf.update(dt, self.focus_cam_temp_sensor.temperature());
+        }
+
+        if let Some(pf) = self.watchdog_out_of_sync.as_mut() {
+            let fault_active = pf.update(dt, rel_time);
+            self.error_register.out_of_sync = fault_active;
+        }
+    }
+
+    #[allow(dead_code)]
+    fn hard_reset(&mut self, rel_time: Time) {
+        warn!(?rel_time, "Vision hard reset");
+
+        // Clear error register
+        self.error_register.out_of_sync = false;
+
+        // Clear tracking state
+        self.in_focus_object_ids = None;
+        self.scanner_tracker.reset();
+        self.focus_tracker.reset();
+
+        // Reset point failures
+        if let Some(pf) = self.active_cooling.as_mut() {
+            pf.reset();
+        }
+        if let Some(pf) = self.scanner_camera_offline.as_mut() {
+            pf.reset();
+        }
+        if let Some(pf) = self.focus_camera_offline.as_mut() {
+            pf.reset();
+        }
+        if let Some(pf) = self.focus_camera_gimbal.as_mut() {
+            pf.reset();
+        }
+        if let Some(pf) = self.watchdog_out_of_sync.as_mut() {
+            let watchdog_out_of_sync_recurring = self
+                .config
+                .fault_config
+                .as_ref()
+                .and_then(|c| c.watchdog_out_of_sync_recurring)
+                .unwrap_or(false);
+
+            pf.reset();
+
+            if watchdog_out_of_sync_recurring {
+                // Update the time threshold to now + dur
+                pf.set_threshold(self.watchdog_out_of_sync_threshold.unwrap() + rel_time);
+            } else {
+                // One-shot, disable further activations
+                pf.set_disabled(true);
+            }
+        }
+
+        if let Some(constant_temperature_after_reset) = self
+            .config
+            .fault_config
+            .as_ref()
+            .and_then(|c| c.focus_camera_constant_temperature_after_reset)
+        {
+            // Use a constant temperature model
+            self.focus_cam_temp_sensor
+                .convert_to_constant_model(constant_temperature_after_reset);
+        } else {
+            // Otherwise reset to initial temperature in the original model
+            self.focus_cam_temp_sensor.reset();
+        }
+
+        if let Some(constant_temperature_after_reset) = self
+            .config
+            .fault_config
+            .as_ref()
+            .and_then(|c| c.scanner_camera_constant_temperature_after_reset)
+        {
+            // Use a constant temperature model
+            self.scanner_cam_temp_sensor
+                .convert_to_constant_model(constant_temperature_after_reset);
+        } else {
+            // Otherwise reset to initial temperature in the original model
+            self.scanner_cam_temp_sensor.reset();
+        }
+
+        // Drop message buffers
+        self.event_tx.clear();
+        self.cmd_rx.clear();
+        self.res_tx.clear();
+    }
+}
+
+impl<'a> SimulationComponent<'a> for VisionSubsystem {
+    type SharedState = SatelliteSharedState;
+    type Environment = SatelliteEnvironment<'a>;
+
+    fn init(&mut self, env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
+        let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
+        MODALITY.emit_sat_timeline_attrs(Self::COMPONENT_NAME, sat.id);
+        MODALITY.quick_event("init");
+
+        self.scanner_cam_temp_sensor.init(env, sat);
+        self.focus_cam_temp_sensor.init(env, sat);
+
+        self.init_fault_models(sat.id);
+
+        if let Some(mut gui) = sat.gui.as_ref().map(|gui| gui.borrow_mut()) {
+            let gps = env
+                .fsw_data
+                .gps
+                .get(&PRIMARY_GPS)
+                .expect("Missing primary GPS");
+
+            let scanner_camera = Camera::new(self.config.scanner_field_of_view_angle, &gps.pos_w);
+            gui.update_satellite_scanner_camera(
+                sat.id.satcat_id,
+                scanner_camera.viewing_volume_radius,
+                scanner_camera.viewing_volume_half_height * 2.0,
+                &scanner_camera.isometry,
+            );
+
+            let focus_camera = Camera::new(self.config.focus_field_of_view_angle, &gps.pos_w);
+            gui.update_satellite_focus_camera(
+                sat.id.satcat_id,
+                focus_camera.viewing_volume_radius,
+                focus_camera.viewing_volume_half_height * 2.0,
+                &focus_camera.isometry,
+            );
+        }
+    }
+
+    fn reset(&mut self, _env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
+        let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
+        MODALITY.quick_event("reset");
+    }
+
+    fn step(&mut self, dt: Time, env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
+        let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
+
+        self.scanner_cam_temp_sensor.step(dt, env, sat);
+        self.focus_cam_temp_sensor.step(dt, env, sat);
+
+        self.update_fault_models(dt, env.sim_info.relative_time, sat.power_supply_voltage);
+
+        if let Some(cmd) = self.cmd_rx.recv() {
+            match cmd {
+                VisionCommand::GetStatus => {
+                    let _ = self.res_tx.try_send(VisionResponse::Status(VisionStatus {
+                        scanner_camera_temperature: self.scanner_cam_temp_sensor.temperature(),
+                        focus_camera_temperature: self.focus_cam_temp_sensor.temperature(),
+                        error_register: self.error_register,
+                    }));
+                }
+                VisionCommand::PrioritizeIrEvent(source_id) => {
+                    let mut tracked_objects = self
+                        .focus_tracker
+                        .grount_truth_id_to_sid
+                        .iter()
+                        .chain(self.scanner_tracker.grount_truth_id_to_sid.iter());
+
+                    if let Some(gt_id) =
+                        tracked_objects.find_map(
+                            |(gt_id, &sid)| if sid == source_id { Some(gt_id) } else { None },
+                        )
+                    {
+                        // Either the scanner or the focus tracker knows about this ID
+                        self.in_focus_object_ids = (*gt_id, source_id).into();
+
+                        debug!(
+                            sat = sat.id.name,
+                            ground_truth_id = gt_id,
+                            source_id = ?source_id,
+                            rel_time = env.sim_info.relative_time.as_secs(),
+                            "Prioritized IR event"
+                        );
+                        MODALITY.quick_event_attrs(
+                            "prioritize_ir_event",
+                            gt_and_src_id_attrs(*gt_id, source_id),
+                        );
+                    } else {
+                        debug!(
+                            sat = sat.id.name,
+                            source_id = ?source_id,
+                            rel_time = env.sim_info.relative_time.as_secs(),
+                            "Requested prioritize IR event not tracked"
+                        );
+                        MODALITY.quick_event("prioritize_ir_event_invalid");
+                    }
+                }
+            }
+        }
+
+        // If we're halted, don't run camera models
+        if self.error_register.out_of_sync {
+            if let Some(mut gui) = sat.gui.as_ref().map(|gui| gui.borrow_mut()) {
+                gui.remove_satellite_scanner_camera(sat.id.satcat_id);
+                gui.remove_satellite_focus_camera(sat.id.satcat_id);
+            }
+        }
+
+        // Downsample to update_interval for IR event tracking/updates
+        if !self.downsample_step(dt) {
+            return;
+        }
+
+        let gps = env
+            .fsw_data
+            .gps
+            .get(&PRIMARY_GPS)
+            .expect("Missing primary GPS");
+
+        let focus_camera_disabled = self
+            .focus_camera_offline
+            .as_ref()
+            .map(|pf| pf.is_active())
+            .unwrap_or(false)
+            || self.config.focus_camera_disabled;
+
+        let scanner_camera = Camera::new(self.config.scanner_field_of_view_angle, &gps.pos_w);
+        let mut focus_camera = Camera::new(self.config.focus_field_of_view_angle, &gps.pos_w);
+
+        // Run containment test on the scanner camera, if not offline
+        let mut detection_events = Vec::new();
+        if !self
+            .scanner_camera_offline
+            .as_ref()
+            .map(|pf| pf.is_active())
+            .unwrap_or(false)
+        {
+            for gt in env.ground_truth_ir_events.iter() {
+                // Test if object is contained in the viewing volume
+                if let Some(tracked_event) = self.scanner_tracker.process_event(
+                    env.sim_info.relative_time,
+                    sat.id,
+                    &scanner_camera,
+                    &gt.event,
+                ) {
+                    detection_events.push(tracked_event);
+                }
+            }
+        }
+
+        // The active cooling point failure simulates an extreme reduction
+        // in scanner camera operation.
+        // No longer have velocity information and we halve the intensity.
+        if self
+            .active_cooling
+            .as_ref()
+            .map(|pf| pf.is_active())
+            .unwrap_or(false)
+        {
+            for detection in detection_events.iter_mut() {
+                detection.velocity = Vector3::zeros();
+                detection.velocity_east = 0.0;
+                detection.velocity_north = 0.0;
+                detection.intensity =
+                    LuminousIntensity::from_candelas(detection.intensity.as_candelas() / 2.0);
+            }
+        }
+
+        // Remove the in-focus object if no longer in the scanner FOV, focus camera will
+        // orient back to origin
+        if let Some(in_focus_object_ids) = self.in_focus_object_ids {
+            if !detection_events
+                .iter()
+                .any(|ev| ev.ground_truth_id == in_focus_object_ids.0)
+            {
+                let _ = self.in_focus_object_ids.take();
+                debug!(
+                    sat = sat.id.name,
+                    ground_truth_id = in_focus_object_ids.0,
+                    source_id = ?in_focus_object_ids.1,
+                    rel_time = env.sim_info.relative_time.as_secs(),
+                    "Lost focus of IR event"
+                );
+                MODALITY.quick_event_attrs(
+                    "lost_focus",
+                    gt_and_src_id_attrs(in_focus_object_ids.0, in_focus_object_ids.1),
+                );
+            }
+        }
+
+        // Sort the events detected by the scanner camera by intensity, most intense first
+        detection_events.sort_by(|a, b| b.intensity.total_cmp(&a.intensity));
+
+        let mut in_focus_object = self
+            .in_focus_object_ids
+            .and_then(|(gt, _)| detection_events.iter().find(|ev| ev.ground_truth_id == gt));
+
+        // Set the focus camera to track the most intense object in the scanner FOV (if one exists)
+        if let Some(most_intense_scanner_event) = detection_events.get(0) {
+            // If the gimbal failure is not active
+            if !self
+                .focus_camera_gimbal
+                .as_ref()
+                .map(|pf| pf.is_active())
+                .unwrap_or(false)
+            {
+                let is_more_intense_than_currently_in_focus = in_focus_object
+                    .as_ref()
+                    .map(|ev| most_intense_scanner_event.intensity > ev.intensity)
+                    .unwrap_or(true);
+
+                if is_more_intense_than_currently_in_focus {
+                    debug!(
+                        sat = sat.id.name,
+                        ground_truth_id = most_intense_scanner_event.ground_truth_id,
+                        source_id = ?most_intense_scanner_event.source_id,
+                        rel_time = env.sim_info.relative_time.as_secs(),
+                        "Focusing on IR event"
+                    );
+                    MODALITY.quick_event_attrs(
+                        "acquired_focus",
+                        gt_and_src_id_attrs(
+                            most_intense_scanner_event.ground_truth_id,
+                            most_intense_scanner_event.source_id,
+                        ),
+                    );
+
+                    self.in_focus_object_ids = (
+                        most_intense_scanner_event.ground_truth_id,
+                        most_intense_scanner_event.source_id,
+                    )
+                        .into();
+                }
+            }
+        }
+
+        // Clear out the in-focus object if gimbal failure is active
+        if self
+            .focus_camera_gimbal
+            .as_ref()
+            .map(|pf| pf.is_active())
+            .unwrap_or(false)
+        {
+            let _ = in_focus_object.take();
+            let _ = self.in_focus_object_ids.take();
+        }
+
+        // Align the focus camera with the target, otherwise it stays at the origin
+        if let Some(in_focus_object) = in_focus_object.as_ref() {
+            focus_camera.set_focal_point_target(&in_focus_object.position);
+        }
+
+        // Run through the same containment test with the focus camera, if not offline
+        if !focus_camera_disabled {
+            for gt in env.ground_truth_ir_events.iter() {
+                // Test if object is contained in the viewing volume
+                if let Some(tracked_event) = self.focus_tracker.process_event(
+                    env.sim_info.relative_time,
+                    sat.id,
+                    &focus_camera,
+                    &gt.event,
+                ) {
+                    detection_events.push(tracked_event);
+                }
+            }
+        }
+
+        if !detection_events.is_empty() {
+            let _ = self.event_tx.try_send(Detections {
+                sat_timestamp: sat.rtc,
+                events: detection_events,
+            });
+        }
+
+        // Update GUI
+        if let Some(mut gui) = sat.gui.as_ref().map(|gui| gui.borrow_mut()) {
+            if self
+                .scanner_camera_offline
+                .as_ref()
+                .map(|pf| pf.is_active())
+                .unwrap_or(false)
+            {
+                gui.remove_satellite_scanner_camera(sat.id.satcat_id);
+            } else {
+                gui.update_satellite_scanner_camera(
+                    sat.id.satcat_id,
+                    scanner_camera.viewing_volume_radius,
+                    scanner_camera.viewing_volume_half_height * 2.0,
+                    &scanner_camera.isometry,
+                );
+            }
+
+            if focus_camera_disabled {
+                gui.remove_satellite_focus_camera(sat.id.satcat_id);
+            } else {
+                gui.update_satellite_focus_camera(
+                    sat.id.satcat_id,
+                    focus_camera.viewing_volume_radius,
+                    focus_camera.viewing_volume_half_height * 2.0,
+                    &focus_camera.isometry,
+                );
+            }
+        }
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
+enum CameraSourceIdTracker {
+    /// Wide-angle scanner camera
+    Scanner(i64),
+
+    /// Narrow-angle focus camera
+    Focus(i64),
+}
+
+impl CameraSourceIdTracker {
+    pub fn new_scanner() -> Self {
+        CameraSourceIdTracker::Scanner(0)
+    }
+
+    pub fn new_focus() -> Self {
+        CameraSourceIdTracker::Focus(0)
+    }
+
+    #[allow(dead_code)]
+    pub fn reset(&mut self) {
+        match self {
+            CameraSourceIdTracker::Scanner(id) => {
+                *id = 0;
+            }
+            CameraSourceIdTracker::Focus(id) => {
+                *id = 0;
+            }
+        }
+    }
+
+    pub fn next_id(&mut self) -> CameraSourceId {
+        match self {
+            CameraSourceIdTracker::Scanner(id) => {
+                let next = *id;
+                *id += 1;
+                CameraSourceId::Scanner(next)
+            }
+            CameraSourceIdTracker::Focus(id) => {
+                let next = *id;
+                *id += 1;
+                CameraSourceId::Focus(next)
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ObjectTracker {
+    /// Ground truth IDs to CameraSourceId's
+    grount_truth_id_to_sid: HashMap<i64, CameraSourceId>,
+
+    /// Next CameraSourceId to assign to an event
+    next_id: CameraSourceIdTracker,
+}
+
+impl ObjectTracker {
+    pub fn new(base: CameraSourceIdTracker) -> Self {
+        Self {
+            grount_truth_id_to_sid: Default::default(),
+            next_id: base,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn reset(&mut self) {
+        self.grount_truth_id_to_sid.clear();
+        self.next_id.reset();
+    }
+
+    pub fn process_event(
+        &mut self,
+        rel_time: Time,
+        sat_id: &SatelliteId,
+        camera: &Camera,
+        ground_truth_event: &IREvent,
+    ) -> Option<IREvent> {
+        let p = Point3::new(
+            ground_truth_event.position.x,
+            ground_truth_event.position.y,
+            ground_truth_event.position.z,
+        );
+
+        if camera.is_point_in_view(&p) {
+            // In FOV
+            let mut ev = ground_truth_event.clone();
+            let source_id = self
+                .grount_truth_id_to_sid
+                .entry(ev.ground_truth_id)
+                .and_modify(|sid| {
+                    // We've been tracking it, use our assigned ID
+                    debug!(
+                        sat = sat_id.name,
+                        ground_truth_id = ev.ground_truth_id,
+                        source_id = ?sid,
+                        rel_time = rel_time.as_secs(),
+                        "Tracking IR event"
+                    );
+                })
+                .or_insert_with(|| {
+                    // Newly detected, assign it an ID
+                    let sid = self.next_id.next_id();
+                    debug!(
+                        sat = sat_id.name,
+                        ground_truth_id = ev.ground_truth_id,
+                        source_id = ?sid,
+                        rel_time = rel_time.as_secs(),
+                        "Detected IR event"
+                    );
+                    MODALITY.quick_event_attrs(
+                        "detected_ir_event",
+                        gt_and_src_id_attrs(ev.ground_truth_id, sid),
+                    );
+                    sid
+                });
+            ev.source_id = *source_id;
+            Some(ev)
+        } else {
+            // No longer tracking this object or never were
+            let maybe_was_tracking = self
+                .grount_truth_id_to_sid
+                .remove(&ground_truth_event.ground_truth_id);
+            if let Some(sid) = maybe_was_tracking {
+                debug!(
+                    sat = sat_id.name,
+                    ground_truth_id = ground_truth_event.ground_truth_id,
+                    source_id = ?sid,
+                    rel_time = rel_time.as_secs(),
+                    "Lost IR event"
+                );
+                MODALITY.quick_event_attrs(
+                    "lost_ir_event",
+                    gt_and_src_id_attrs(ground_truth_event.ground_truth_id, sid),
+                );
+            }
+            None
+        }
+    }
+}
+
+struct Camera {
+    /// Position of the camera in the world frame [m]
+    pos: Vector3<f64>,
+    /// Viewing volume half-height along the principal axis [m]
+    viewing_volume_half_height: f64,
+    /// Radius of the viewing_volume cone [m]
+    viewing_volume_radius: f64,
+    /// Translation of the midpoint of the viewing volumne relative to Earth
+    /// and rototation relative to the Earth in the world frame
+    isometry: Isometry3<f64>,
+    /// Viewing volume
+    viewing_volume: Cone,
+}
+
+impl Camera {
+    /// Create a new camera model with the given FOV
+    /// and location in the world frame
+    pub fn new(fov: Angle, pos_w: &Vector3<f64>) -> Self {
+        // Distance from ECEF origin to satellite cm, meters
+        let viewing_volume_height = pos_w.magnitude();
+        let viewing_volume_half_height = viewing_volume_height / 2.0;
+
+        // Angle from the principal axis, radians
+        let theta = fov.as_radians() / 2.0;
+
+        // Radius of the viewing_volume cone
+        let viewing_volume_radius = theta.tan() * viewing_volume_height;
+
+        // Construct a cone, from satellite origin in the W frame
+        // to the center of the Earth
+        // The principal axis is aligned with the Y axis
+        let viewing_volume = Cone::new(viewing_volume_half_height, viewing_volume_radius);
+
+        // Setup the isometry to transform the viewing volume
+        // to our GPS/satellite position, orientated towards the Earth
+        let ref_point = Vector3::new(0.0, viewing_volume_half_height, 0.0);
+        let rotation =
+            UnitQuaternion::rotation_between(&ref_point, pos_w).expect("Bad GPS rotation");
+
+        // Half the distance since the viewing volume origin needs to be offset (half-height)
+        let translation = Translation3::from(rotation * ref_point);
+
+        let isometry = Isometry3 {
+            rotation,
+            translation,
+        };
+
+        Self {
+            pos: *pos_w,
+            viewing_volume_half_height,
+            viewing_volume_radius,
+            isometry,
+            viewing_volume,
+        }
+    }
+
+    pub fn set_focal_point_target(&mut self, fp: &Vector3<f64>) {
+        // Vector between the camera position and the target
+        let pos_rel_to_fp = self.pos - fp;
+
+        // Principal axis of the viewing volume cone
+        let ref_point = Vector3::new(0.0, self.viewing_volume_half_height, 0.0);
+
+        let rotation =
+            UnitQuaternion::rotation_between(&ref_point, &pos_rel_to_fp).expect("Bad GPS rotation");
+
+        let translation = Translation3::from(self.pos - (rotation * ref_point));
+
+        self.isometry = Isometry3 {
+            rotation,
+            translation,
+        };
+    }
+
+    pub fn is_point_in_view(&self, p: &Point3<f64>) -> bool {
+        self.viewing_volume.contains_point(&self.isometry, p)
+    }
+}
+
+fn gt_and_src_id_attrs(
+    gt_id: i64,
+    src_id: CameraSourceId,
+) -> Vec<(modality_api::AttrKey, modality_api::AttrVal)> {
+    let mut b = AttrsBuilder::new();
+    b.kv("event.ground_truth_id", gt_id);
+    b.kv("event.source_type", src_id.source_type());
+    if let Some(id) = src_id.source_id() {
+        b.kv("event.source_id", id);
+    }
+    b.build()
+}

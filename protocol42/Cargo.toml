@@ -1,0 +1,19 @@
+[package]
+name = "protocol42"
+version = "0.1.0"
+edition = "2021"
+authors = ["Jon Lamb <jon@auxon.io>"]
+license = "Apache-2.0"
+repository = "https://github.com/auxoncorp/satellite-sim"
+
+[dependencies]
+types42 = { path = "../types42" }
+
+nom = "7"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+nalgebra = "0.32"
+thiserror = "1.0.43"
+tracing = "0.1"
+
+[dev-dependencies]
+indoc = "2"

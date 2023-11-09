@@ -1,0 +1,7 @@
+TELEMETRY <%= target_name %> RELAY_SAT_TO_GROUND &
+  LITTLE_ENDIAN "Relayed satellite to ground telemetry from <%= target_name %>"
+  <%= render "../../lib/_sat_tlm_common.txt", locals: {sat_id: 23581} %>
+
+TELEMETRY <%= target_name %> TLE &
+  LITTLE_ENDIAN "Satellite orbit TLE from <%= target_name %>"
+  <%= render "../../lib/_sat_tle_common.txt", locals: {sat_id: 23581} %>

@@ -1,0 +1,12 @@
+[package]
+name = "types42"
+version = "0.1.0"
+edition = "2021"
+authors = ["Jon Lamb <jon@auxon.io>"]
+license = "Apache-2.0"
+repository = "https://github.com/auxoncorp/satellite-sim"
+
+[dependencies]
+derive_more = "0.99"
+nalgebra = "0.32"
+chrono = { version = "0.4", default-features = false, features = ["serde"] }

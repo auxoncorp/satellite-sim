@@ -1,0 +1,54 @@
+name = 'example scenario'
+
+[[temperature-sensor]]
+name = 'imu-temp-sensor'
+model = 'random-interval'
+initial = 5.0
+min = -50.0
+max = 50.0
+day = 5.0
+night = -5.0
+
+[[point-failure]]
+name = 'imu-degraded-state'
+threshold = '>= 30.0'
+hold-period = 1.0
+
+[[point-failure]]
+name = 'imu-data-inconsistency'
+threshold = '>= 40.0'
+hold-period = 2.0
+
+[[imu-subsystem]]
+name = 'imu'
+temperature-sensor = 'imu-temp-sensor'
+    [imu-subsystem.fault]
+    degraded-state = 'imu-degraded-state'
+    data-inconsistency = 'imu-data-inconsistency'
+
+# GALAXY-1 will use the provided configuration
+# while the other satellites will use the default configuration
+[[satellite]]
+id = 'GALAXY-1'
+# The IMU subsystem will use the provided configuration
+# while the other subsystems will use the default
+imu = 'imu'
+
+[[relay-ground-station]]
+id = 1
+name = 'GSFC'
+latitude = 37.0
+longitude = -77.0
+enable-time-sync = true
+rtc-drift = 0.02
+
+[[ir-event]]
+ground-truth-id = 1
+activate-at = 0.0
+deactivate-at = 10000.0
+latitude = 41.5240
+longitude = 105.3188
+altitude = 100000.0
+velocity-east = -2000.0
+velocity-north = 2000.0
+intensity = 10000.0

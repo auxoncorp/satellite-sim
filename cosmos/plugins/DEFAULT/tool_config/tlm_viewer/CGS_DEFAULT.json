@@ -1,0 +1,18 @@
+[
+  {
+    "screen": "HEALTH_STATUS",
+    "target": "CGS",
+    "floated": false,
+    "top": 0,
+    "left": 0,
+    "zIndex": 0
+  },
+  {
+    "screen": "MAP",
+    "target": "CGS",
+    "floated": false,
+    "top": 0,
+    "left": 0,
+    "zIndex": 0
+  }
+]
