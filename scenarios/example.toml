@@ -27,13 +27,16 @@ temperature-sensor = 'imu-temp-sensor'
     data-inconsistency = 'imu-data-inconsistency'
 
 # GALAXY-1 will use the provided configuration
-# while the other satellites will use the default configuration
+# while the other satellites will use the default configuration.
+# Note that the number of satellites is fixed, regardless of configuration.
 [[satellite]]
 id = 'GALAXY-1'
 # The IMU subsystem will use the provided configuration
 # while the other subsystems will use the default
 imu = 'imu'
 
+# Only a single ground station.
+# If none are defined in the config file, then the default set will be used.
 [[relay-ground-station]]
 id = 1
 name = 'GSFC'
@@ -42,6 +45,8 @@ longitude = -77.0
 enable-time-sync = true
 rtc-drift = 0.02
 
+# Only a IR event.
+# If none are defined in the config file, then the default set will be used.
 [[ir-event]]
 ground-truth-id = 1
 activate-at = 0.0

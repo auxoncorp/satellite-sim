@@ -1,0 +1,264 @@
+name = 'A scenario with all of the default ground stations and randomly generated IR events'
+
+# Satellites will use the default configuration
+
+[[relay-ground-station]]
+id = 1
+name = 'GSFC'
+latitude = 37
+longitude = -77
+enable-time-sync = true
+rtc-drift = 0.02
+
+[[relay-ground-station]]
+id = 2
+name = 'South Point'
+latitude = 19.000000000000004
+longitude = -155.6
+enable-time-sync = true
+rtc-drift = 0.02
+
+[[relay-ground-station]]
+id = 3
+name = 'Dongara'
+latitude = -29.000000000000004
+longitude = 115.39999999999999
+enable-time-sync = true
+rtc-drift = 0.02
+
+[[relay-ground-station]]
+id = 4
+name = 'Santiago'
+latitude = -33
+longitude = -71
+enable-time-sync = true
+rtc-drift = 0.02
+
+[[relay-ground-station]]
+id = 5
+name = 'SANSA EO'
+latitude = -25.887152
+longitude = 27.7076
+enable-time-sync = true
+rtc-drift = 0.02
+
+[[ir-event]]
+ground-truth-id = 0
+activate-at = 0
+deactivate-at = 10000
+latitude = 32.0586952182189866
+longitude = 66.15184388700716
+altitude = 1744152.8381632592
+velocity-east = 5594.336189767439
+velocity-north = 4868.619514501259
+intensity = 28768.70050639106
+
+[[ir-event]]
+ground-truth-id = 1
+activate-at = 0
+deactivate-at = 10000
+latitude = 26.083849945708254
+longitude = 76.1677591123322
+altitude = 1209900.8642802297
+velocity-east = 5129.516266307303
+velocity-north = 5784.040848181934
+intensity = 84173.53199864972
+
+[[ir-event]]
+ground-truth-id = 2
+activate-at = 0
+deactivate-at = 10000
+latitude = 7.549354865978351
+longitude = 10.4632387367731
+altitude = 1660676.5412769066
+velocity-east = 4415.428183617453
+velocity-north = 4401.7852250150045
+intensity = 22182.151430692677
+
+[[ir-event]]
+ground-truth-id = 3
+activate-at = 0
+deactivate-at = 10000
+latitude = 88.952185811403533
+longitude = 71.59350619095956
+altitude = 1285861.0040775393
+velocity-east = 5754.54069681748
+velocity-north = 5699.111245379439
+intensity = 65080.173238487536
+
+[[ir-event]]
+ground-truth-id = 4
+activate-at = 6101.0493385986765
+deactivate-at = 16101.049338598677
+latitude = 6.21828706459965
+longitude = 1.7762176652012
+altitude = 117286.70306922514
+velocity-east = 4902.7268389247765
+velocity-north = -376.38007290754877
+intensity = 45501.762406261034
+
+[[ir-event]]
+ground-truth-id = 5
+activate-at = 6101.0493385986765
+deactivate-at = 16101.049338598677
+latitude = 65.30087347233487
+longitude = 17.428860253952138
+altitude = 145664.4845362288
+velocity-east = 2204.7011719004477
+velocity-north = -1076.7824840341336
+intensity = 64184.150127431305
+
+[[ir-event]]
+ground-truth-id = 6
+activate-at = 6101.0493385986765
+deactivate-at = 16101.049338598677
+latitude = 5.4964613176198
+longitude = 73.738114421367719
+altitude = 698082.1558158193
+velocity-east = 4383.0304136551995
+velocity-north = -405.8240957874864
+intensity = 45357.212775292835
+
+[[ir-event]]
+ground-truth-id = 7
+activate-at = 6101.0493385986765
+deactivate-at = 16101.049338598677
+latitude = 65.35768492774153
+longitude = 18.24039082434029
+altitude = 490813.33065505355
+velocity-east = 3287.972004279403
+velocity-north = -860.8854619748952
+intensity = 13182.601331443439
+
+[[ir-event]]
+ground-truth-id = 8
+activate-at = 6101.0493385986765
+deactivate-at = 16101.049338598677
+latitude = 6.30604182321231
+longitude = 44.86374064535925
+altitude = 553588.8978589224
+velocity-east = 2221.1151344335617
+velocity-north = 334.3785825817954
+intensity = 66445.02256672
+
+[[ir-event]]
+ground-truth-id = 9
+activate-at = 6101.0493385986765
+deactivate-at = 16101.049338598677
+latitude = 64.70840294106722
+longitude = 44.564073184902579
+altitude = 973952.7730271862
+velocity-east = 2378.7878292408204
+velocity-north = 667.2927970787937
+intensity = 71129.19713257469
+
+[[ir-event]]
+ground-truth-id = 10
+activate-at = 8675.198874913993
+deactivate-at = 13605.668250073666
+latitude = 43.332330723165526
+longitude = 106.92436354134965
+altitude = 680317.9268515587
+velocity-east = 15.220908494486366
+velocity-north = 4718.108052420317
+intensity = 77356.53315637498
+
+[[ir-event]]
+ground-truth-id = 11
+activate-at = 6871.8443265561045
+deactivate-at = 12447.57569093943
+latitude = 48.13115405355859
+longitude = 107.04943650047665
+altitude = 630288.0983184436
+velocity-east = 205.2094121138166
+velocity-north = 4169.276651271084
+intensity = 56551.23900587099
+
+[[ir-event]]
+ground-truth-id = 12
+activate-at = 7666.414586586556
+deactivate-at = 10043.693955768338
+latitude = 42.346824687074445
+longitude = 111.80438570885877
+altitude = 356235.8881789859
+velocity-east = -1967.8248990362665
+velocity-north = 3456.4925300961904
+intensity = 58115.06687813859
+
+[[ir-event]]
+ground-truth-id = 13
+activate-at = 622.9768292845101
+deactivate-at = 7662.795038267366
+latitude = 49.37000738659578
+longitude = 106.60146152359846
+altitude = 234189.88437712603
+velocity-east = -487.77336850111124
+velocity-north = 2666.9243991394615
+intensity = 73831.45610278254
+
+[[ir-event]]
+ground-truth-id = 14
+activate-at = 981.078318042924
+deactivate-at = 6634.388644099853
+latitude = 42.17039367372857
+longitude = 110.81359240965637
+altitude = 848412.4708663493
+velocity-east = 990.0453171989925
+velocity-north = 2814.313202756528
+intensity = 96396.09347784294
+
+[[ir-event]]
+ground-truth-id = 15
+activate-at = 839.5755444729925
+deactivate-at = 1801.1667795208891
+latitude = 46.61174491490875
+longitude = 115.22489050535938
+altitude = 715829.4453834355
+velocity-east = -567.9572483048714
+velocity-north = 4346.147765908857
+intensity = 72597.24854588178
+
+[[ir-event]]
+ground-truth-id = 16
+activate-at = 5771.4425766085915
+deactivate-at = 12499.0732724641
+latitude = 42.78973972374093
+longitude = 108.56020457147366
+altitude = 588512.6304656597
+velocity-east = 723.9374223266927
+velocity-north = 2492.8959000745745
+intensity = 61764.2142248484
+
+[[ir-event]]
+ground-truth-id = 17
+activate-at = 7541.3085757276895
+deactivate-at = 13425.908011108517
+latitude = 46.316253003761155
+longitude = 107.23078021833557
+altitude = 876150.0504861036
+velocity-east = -1163.4230139529718
+velocity-north = 3611.1016492888375
+intensity = 7116.117727547733
+
+[[ir-event]]
+ground-truth-id = 18
+activate-at = 5370.661401649931
+deactivate-at = 10161.273838746229
+latitude = 43.40440751421649
+longitude = 107.33349074498643
+altitude = 371354.86173096794
+velocity-east = -1268.1964629991212
+velocity-north = 4819.184290304907
+intensity = 5041.671368252027
+
+[[ir-event]]
+ground-truth-id = 19
+activate-at = 3974.6636251645086
+deactivate-at = 10143.750192655601
+latitude = 46.28893467276928
+longitude = 113.0056054795721
+altitude = 907293.2703398375
+velocity-east = -288.70600408437895
+velocity-north = 3949.6715227720406
+intensity = 610.6411914118148
+
