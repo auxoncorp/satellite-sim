@@ -471,6 +471,8 @@ impl ModalityClient {
                                     .map(|kv| (kv.key.into(), kv.value))
                                     .collect();
 
+                                inner.active_mutations.insert(mutator_id, mutation_id);
+
                                 tracing::debug!(
                                         mutator_id = %mutator_id,
                                         mutation_id = %mutation_id,
