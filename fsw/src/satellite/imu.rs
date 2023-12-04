@@ -1,18 +1,20 @@
 use modality_api::TimelineId;
+use modality_mutator_protocol::descriptor::owned::*;
 use na::Vector3;
 use serde::Serialize;
+use std::collections::HashMap;
 use tracing::warn;
 
 use crate::{
     channel::{Receiver, Sender, TracedMessage},
     modality::{kv, AttrsBuilder, MODALITY},
+    mutator::GenericBooleanMutator,
     point_failure::{PointFailure, PointFailureConfig},
+    satellite::temperature_sensor::{TemperatureSensor, TemperatureSensorConfig},
     satellite::{SatelliteEnvironment, SatelliteId, SatelliteSharedState},
     units::{Acceleration, AngularVelocity, MagneticFluxDensity, Temperature, Time, Timestamp},
     SimulationComponent,
 };
-
-use super::temperature_sensor::{TemperatureSensor, TemperatureSensorConfig};
 
 // Sensor axis indices are fixed, set in the 42 spacecraft config file
 const INDEX_X: u64 = 0;
@@ -28,8 +30,7 @@ pub struct ImuSubsystem {
 
     degraded_state: Option<PointFailure<Temperature>>,
     data_inconsistency: Option<PointFailure<Temperature>>,
-    watchdog_out_of_sync: Option<PointFailure<Time>>,
-    watchdog_out_of_sync_threshold: Option<Time>,
+    watchdog_out_of_sync: Option<GenericBooleanMutator>,
 
     timeline: TimelineId,
 
@@ -41,13 +42,11 @@ pub struct ImuSubsystem {
 #[derive(Debug, Clone)]
 pub struct ImuConfig {
     pub temperature_sensor_config: TemperatureSensorConfig,
-    pub fault_config: Option<ImuFaultConfig>,
+    pub fault_config: ImuFaultConfig,
 }
 
-/// Parameters for the IMU point failures.
+/// Parameters for the IMU point failures and mutators.
 /// See the requirements doc, sections 1.3.4.15 and 1.3.4.16.
-///
-/// Both point point failures are motivated by temperature.
 #[derive(Debug, Clone, Default)]
 pub struct ImuFaultConfig {
     /// Parameters for the degraded state point failure.
@@ -68,13 +67,9 @@ pub struct ImuFaultConfig {
     /// point failures from recurring.
     pub constant_temperature_after_reset: Option<Temperature>,
 
-    /// Parameters for the data watchdog execution out-of-sync point failure.
+    /// Parameters for the data watchdog execution out-of-sync mutator.
     /// See sections 1.3.4.2 of the requirements doc.
-    pub watchdog_out_of_sync: Option<PointFailureConfig<Time>>,
-
-    /// Whether the `watchdog_out_of_sync` point failure
-    /// is recurring or not. Defaults to false.
-    pub watchdog_out_of_sync_recurring: Option<bool>,
+    pub watchdog_out_of_sync: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -223,22 +218,15 @@ impl ImuSubsystem {
 
         let degraded_state = config
             .fault_config
+            .degraded_state
             .as_ref()
-            .and_then(|c| c.degraded_state.as_ref())
             .map(|pf_config| PointFailure::new(pf_config.clone()));
 
         let data_inconsistency = config
             .fault_config
+            .data_inconsistency
             .as_ref()
-            .and_then(|c| c.data_inconsistency.as_ref())
             .map(|pf_config| PointFailure::new(pf_config.clone()));
-
-        let watchdog_out_of_sync = config
-            .fault_config
-            .as_ref()
-            .and_then(|c| c.watchdog_out_of_sync.as_ref())
-            .map(|pf_config| PointFailure::new(pf_config.clone()));
-        let watchdog_out_of_sync_threshold = watchdog_out_of_sync.as_ref().map(|pf| pf.threshold());
 
         Self {
             config,
@@ -250,8 +238,7 @@ impl ImuSubsystem {
             },
             degraded_state,
             data_inconsistency,
-            watchdog_out_of_sync,
-            watchdog_out_of_sync_threshold,
+            watchdog_out_of_sync: None,
             timeline: TimelineId::allocate(),
             sample_tx,
             cmd_rx,
@@ -273,13 +260,38 @@ impl ImuSubsystem {
             pf.set_context(base_ctx);
             pf.add_context("name", "data_inconsistency");
         }
-        if let Some(pf) = self.watchdog_out_of_sync.as_mut() {
-            pf.set_context(base_ctx);
-            pf.add_context("name", "watchdog_out_of_sync");
+
+        // Construct mutators at sim-init time so we have access to SatelliteId/env details
+        // to qualify the mutator descriptors
+        self.watchdog_out_of_sync =
+            self.config
+                .fault_config
+                .watchdog_out_of_sync
+                .then_some(GenericBooleanMutator::new(OwnedMutatorDescriptor {
+                    name: "IMU watchdog execution out-of-sync".to_owned().into(),
+                    description: "Sets the IMU watchdog execution out-of-sync error register bit"
+                        .to_owned()
+                        .into(),
+                    layer: MutatorLayer::Implementational.into(),
+                    group: "imu".to_owned().into(),
+                    operation: MutatorOperation::Enable.into(),
+                    statefulness: MutatorStatefulness::Transient.into(),
+                    organization_custom_metadata: OrganizationCustomMetadata::new(
+                        "satellite".to_string(),
+                        HashMap::from([
+                            ("id".to_string(), id.satcat_id.into()),
+                            ("name".to_string(), id.name.into()),
+                        ]),
+                    ),
+                    params: Default::default(),
+                }));
+
+        if let Some(m) = &self.watchdog_out_of_sync {
+            MODALITY.register_mutator(m);
         }
     }
 
-    fn update_fault_models(&mut self, dt: Time, rel_time: Time) {
+    fn update_fault_models(&mut self, dt: Time) {
         if let Some(pf) = self.degraded_state.as_mut() {
             let was_active = pf.is_active();
             let fault_active = pf.update(dt, self.temp_sensor.temperature());
@@ -294,10 +306,11 @@ impl ImuSubsystem {
             self.error_register.data_inconsistency = fault_active;
         }
 
-        if let Some(pf) = self.watchdog_out_of_sync.as_mut() {
-            let fault_active = pf.update(dt, rel_time);
-            self.error_register.out_of_sync = fault_active;
-        }
+        self.error_register.out_of_sync = self
+            .watchdog_out_of_sync
+            .as_ref()
+            .map(|m| m.is_active())
+            .unwrap_or(false);
     }
 
     fn soft_reset(&mut self, rel_time: Time) {
@@ -308,11 +321,8 @@ impl ImuSubsystem {
             pf.reset();
         }
 
-        if let Some(constant_temperature_after_reset) = self
-            .config
-            .fault_config
-            .as_ref()
-            .and_then(|c| c.constant_temperature_after_reset)
+        if let Some(constant_temperature_after_reset) =
+            self.config.fault_config.constant_temperature_after_reset
         {
             // Use a constant temperature model
             self.temp_sensor
@@ -341,30 +351,13 @@ impl ImuSubsystem {
         if let Some(pf) = self.data_inconsistency.as_mut() {
             pf.reset();
         }
-        if let Some(pf) = self.watchdog_out_of_sync.as_mut() {
-            let watchdog_out_of_sync_recurring = self
-                .config
-                .fault_config
-                .as_ref()
-                .and_then(|c| c.watchdog_out_of_sync_recurring)
-                .unwrap_or(false);
 
-            pf.reset();
-
-            if watchdog_out_of_sync_recurring {
-                // Update the time threshold to now + dur
-                pf.set_threshold(self.watchdog_out_of_sync_threshold.unwrap() + rel_time);
-            } else {
-                // One-shot, disable further activations
-                pf.set_disabled(true);
-            }
+        if let Some(m) = self.watchdog_out_of_sync.as_mut() {
+            MODALITY.clear_mutation(m);
         }
 
-        if let Some(constant_temperature_after_reset) = self
-            .config
-            .fault_config
-            .as_ref()
-            .and_then(|c| c.constant_temperature_after_reset)
+        if let Some(constant_temperature_after_reset) =
+            self.config.fault_config.constant_temperature_after_reset
         {
             // Use a constant temperature model
             self.temp_sensor
@@ -402,9 +395,13 @@ impl<'a> SimulationComponent<'a> for ImuSubsystem {
     fn step(&mut self, dt: Time, env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
 
+        if let Some(m) = &mut self.watchdog_out_of_sync {
+            MODALITY.process_mutation_plane_messages(std::iter::once(m));
+        }
+
         self.temp_sensor.step(dt, env, sat);
 
-        self.update_fault_models(dt, env.sim_info.relative_time);
+        self.update_fault_models(dt);
 
         // We don't send data if the data inconsistency or watchdog point failure is active
         if !self.error_register.data_inconsistency && !self.error_register.out_of_sync {

@@ -5,13 +5,19 @@ use modality_mutator_protocol::{
 };
 use std::collections::BTreeMap;
 
-/// This is an infallible version of SyncMutatorActuator
+pub use generic_mutator::GenericBooleanMutator;
+
+mod generic_mutator;
+
+pub type MutatorParams = BTreeMap<AttrKey, AttrVal>;
+
+/// This is a specialized/infallible version of SyncMutatorActuator
 pub trait MutatorActuator {
+    fn mutator_id(&self) -> MutatorId;
+
     fn inject(&mut self, mutation_id: MutationId, params: BTreeMap<AttrKey, AttrVal>);
 
     fn reset(&mut self);
 }
 
-pub trait MutatorActuatorDescriptor: MutatorActuator + MutatorDescriptor {
-    fn mutator_id(&self) -> MutatorId;
-}
+pub trait MutatorActuatorDescriptor: MutatorActuator + MutatorDescriptor {}

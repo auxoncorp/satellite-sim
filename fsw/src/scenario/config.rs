@@ -17,6 +17,8 @@ pub struct Config {
     pub temperature_sensors: Vec<TemperatureSensor>,
     #[serde(alias = "point-failure")]
     pub point_failures: Vec<PointFailure>,
+    #[serde(alias = "mutator")]
+    pub mutators: Vec<Mutator>,
     #[serde(alias = "power-subsystem")]
     pub power_subsystems: Vec<PowerSubsystem>,
     #[serde(alias = "compute-subsystem")]
@@ -55,6 +57,13 @@ impl Config {
         for name in cfg.point_failures.iter().map(|t| &t.name) {
             if !names.insert(name) {
                 panic!("Duplicate configuration entry for point failure '{name}'");
+            }
+        }
+
+        names.clear();
+        for name in cfg.mutators.iter().map(|t| &t.name) {
+            if !names.insert(name) {
+                panic!("Duplicate configuration entry for mutator '{name}'");
             }
         }
 
@@ -100,6 +109,10 @@ impl Config {
 
     fn point_failure(&self, name: &str) -> Option<&PointFailure> {
         self.point_failures.iter().find(|t| t.name == name)
+    }
+
+    fn mutator(&self, name: &str) -> Option<&Mutator> {
+        self.mutators.iter().find(|t| t.name == name)
     }
 
     pub(crate) fn power_config(&self, id: SatCatId) -> Option<power::PowerConfig> {
@@ -291,24 +304,28 @@ impl Config {
             .temperature_sensor(&cfg.temperature_sensor)
             .unwrap()
             .into();
-        let fault_config = cfg.fault.as_ref().map(|f| imu::ImuFaultConfig {
-            degraded_state: f
-                .degraded_state
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            data_inconsistency: f
-                .data_inconsistency
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            constant_temperature_after_reset: f
-                .constant_temperature_after_reset
-                .map(Temperature::from_degrees_celsius),
-            watchdog_out_of_sync: f
-                .watchdog_out_of_sync
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            watchdog_out_of_sync_recurring: f.watchdog_out_of_sync_recurring,
-        });
+        let fault_config = cfg
+            .fault
+            .as_ref()
+            .map(|f| imu::ImuFaultConfig {
+                degraded_state: f
+                    .degraded_state
+                    .as_ref()
+                    .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
+                data_inconsistency: f
+                    .data_inconsistency
+                    .as_ref()
+                    .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
+                constant_temperature_after_reset: f
+                    .constant_temperature_after_reset
+                    .map(Temperature::from_degrees_celsius),
+                watchdog_out_of_sync: f
+                    .watchdog_out_of_sync
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
+            })
+            .unwrap_or_default();
 
         Some(imu::ImuConfig {
             temperature_sensor_config,
@@ -451,7 +468,6 @@ pub struct ImuFault {
     pub data_inconsistency: Option<String>,
     pub constant_temperature_after_reset: Option<f64>,
     pub watchdog_out_of_sync: Option<String>,
-    pub watchdog_out_of_sync_recurring: Option<bool>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize)]
@@ -635,6 +651,13 @@ pf_from_impl!(ElectricPotential, from_volts);
 
 #[derive(Clone, PartialEq, PartialOrd, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+pub struct Mutator {
+    pub name: String,
+    pub enabled: bool,
+}
+
+#[derive(Clone, PartialEq, PartialOrd, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct RelayGroundStation {
     pub name: String,
     pub id: u32,
@@ -690,6 +713,10 @@ mod tests {
         name = 'pf1'
         threshold = '>= 10.0'
         hold-period = 20.0
+
+        [[mutator]]
+        name = 'imu-wdt-sync'
+        enabled = true
 
         [[power-subsystem]]
         name = 'power0'
@@ -757,8 +784,7 @@ mod tests {
             degraded-state = 'pf0'
             data-inconsistency = 'pf1'
             constant-temperature-after-reset = 33.0
-            watchdog-out-of-sync = 'pf0'
-            watchdog-out-of-sync-recurring = true
+            watchdog-out-of-sync = 'imu-wdt-sync'
 
         [[satellite]]
         id = 'GALAXY-1'
@@ -795,6 +821,7 @@ mod tests {
         assert_eq!(cfg.name.as_deref(), Some("my scenario"));
         assert_eq!(cfg.temperature_sensors.len(), 2);
         assert_eq!(cfg.point_failures.len(), 2);
+        assert_eq!(cfg.mutators.len(), 1);
         assert_eq!(cfg.satellites.len(), 1);
         assert_eq!(cfg.power_subsystems.len(), 1);
         assert_eq!(cfg.compute_subsystems.len(), 1);
