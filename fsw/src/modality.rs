@@ -8,14 +8,15 @@ use modality_mutation_plane::{
     types::{MutationId, MutatorId, ParticipantId},
 };
 use modality_mutation_plane_client::parent_connection::MutationParentConnection;
-use std::borrow::{Borrow, Cow};
+use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::env;
 use std::fmt::Display;
 use std::future::Future;
+use std::path::Path;
 use std::rc::Rc;
 use std::time::{Duration, SystemTime};
+use std::{env, fs};
 use url::Url;
 
 use crate::ground_station::RackId;
@@ -26,6 +27,14 @@ use crate::units::Timestamp;
 const MUTATION_PROTOCOL_PARENT_URL_ENV_VAR: &str = "MUTATION_PROTOCOL_PARENT_URL";
 const MUTATION_PROTOCOL_PARENT_URL_DEFAULT: &str = "modality-mutation://127.0.0.1:14192";
 const MUTATION_PLANE_POLL_TIMEOUT: Duration = Duration::from_secs(0);
+
+/// Unless specified in the MODALITY_RUN_ID environment variable,
+/// the run-id is automatically generated from a monotonically
+/// increasing integer value cached locally on the file system.
+///
+/// The run-id value will be stored in a file named '.runid' in the
+/// current directory.
+const AUTO_RUN_ID_FILE_NAME: &str = ".runid";
 
 pub const MODALITY: ModalityClient = ModalityClient;
 
@@ -521,9 +530,13 @@ impl Inner {
             .build()
             .unwrap();
 
-        let run_id =
-            std::env::var("MODALITY_RUN_ID").unwrap_or_else(|_1| Uuid::new_v4().to_string());
-        let run_id = RunId::new(run_id);
+        // NOTE(jl): lossy error handling
+        let run_id_val = if let Ok(env_var_val) = std::env::var("MODALITY_RUN_ID") {
+            env_var_val.into()
+        } else {
+            load_auto_run_id().expect("Failed to load auto-run-id")
+        };
+        let run_id = RunId::new(run_id_val);
 
         // Note: This connection isn't kept, it's just to check if modality is there to see if we
         // should try to actually connect each time a timeline is created.
@@ -779,18 +792,21 @@ impl<T> Filter<T> {
 
 #[derive(Clone)]
 struct RunId {
-    id: Rc<String>,
+    // Typically a string or integer
+    id: Rc<AttrVal>,
 }
 
 impl RunId {
-    pub fn new<'a>(id: impl Into<Cow<'a, str>>) -> Self {
-        let sid = id.into().to_string();
-        RunId { id: Rc::new(sid) }
+    pub fn new(id: impl Into<AttrVal>) -> Self {
+        let attr_val = id.into();
+        RunId {
+            id: Rc::new(attr_val),
+        }
     }
 }
 
-impl AsRef<str> for RunId {
-    fn as_ref(&self) -> &str {
+impl AsRef<AttrVal> for RunId {
+    fn as_ref(&self) -> &AttrVal {
         &self.id
     }
 }
@@ -803,8 +819,38 @@ impl Display for RunId {
 
 impl From<RunId> for AttrVal {
     fn from(value: RunId) -> Self {
-        AttrVal::String(value.id.to_string().into())
+        value.id.as_ref().clone()
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AutoRunIdError {
+    #[error("Failed to read the auto-run-id file '{AUTO_RUN_ID_FILE_NAME}'")]
+    FileRead,
+
+    #[error("Failed to parse the auto-run-id file '{AUTO_RUN_ID_FILE_NAME}' contents")]
+    FileParse,
+
+    #[error("Failed to write the auto-run-id file '{AUTO_RUN_ID_FILE_NAME}'")]
+    FileWrite,
+}
+
+fn load_auto_run_id() -> Result<AttrVal, AutoRunIdError> {
+    let path = Path::new(AUTO_RUN_ID_FILE_NAME);
+    let prev_run_id: i64 = if path.exists() {
+        let content = fs::read_to_string(path).map_err(|_| AutoRunIdError::FileRead)?;
+        content
+            .trim()
+            .parse::<i64>()
+            .map_err(|_| AutoRunIdError::FileParse)?
+    } else {
+        0
+    };
+    let run_id = prev_run_id + 1;
+    tracing::debug!(path = %path.display(), prev_run_id, run_id, "Loading auto-run-id");
+    let run_id_str = run_id.to_string();
+    fs::write(path, run_id_str).map_err(|_| AutoRunIdError::FileWrite)?;
+    Ok(AttrVal::from(run_id))
 }
 
 #[derive(Debug, thiserror::Error)]
