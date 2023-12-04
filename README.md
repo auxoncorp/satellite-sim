@@ -27,6 +27,7 @@ This assumes Modality is installed and configured (see the [Modality docs](https
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
   ```
 3. Run the system. This script will build `42` and the `fsw` binaries if needed. See it's `--help` message for more options.
+   The `fsw` binary can be found in `target/release/fsw`.
   ```bash
   ./go.sh
   ```
@@ -40,6 +41,10 @@ various point failures.
 * See [scenarios/example.toml](scenarios/example.toml) for an example scenario configuration file
 * The default scenario configuration is defined in [fsw/src/scenario/nominal.rs](fsw/src/scenario/nominal.rs)
 * The available configurations can be found in [fsw/src/scenario/config.rs](fsw/src/scenario/config.rs)
+
+```bash
+fsw --scenario scenarios/example.toml
+```
 
 ## Using 42 Data Files
 
