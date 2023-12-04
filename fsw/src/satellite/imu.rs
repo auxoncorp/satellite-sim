@@ -67,7 +67,7 @@ pub struct ImuFaultConfig {
     /// point failures from recurring.
     pub constant_temperature_after_reset: Option<Temperature>,
 
-    /// Parameters for the data watchdog execution out-of-sync mutator.
+    /// Enable the data watchdog execution out-of-sync mutator.
     /// See sections 1.3.4.2 of the requirements doc.
     pub watchdog_out_of_sync: bool,
 }
@@ -238,6 +238,7 @@ impl ImuSubsystem {
             },
             degraded_state,
             data_inconsistency,
+            // Mutators are initialized in init_fault_models at sim-init time
             watchdog_out_of_sync: None,
             timeline: TimelineId::allocate(),
             sample_tx,
@@ -273,7 +274,7 @@ impl ImuSubsystem {
                         .to_owned()
                         .into(),
                     layer: MutatorLayer::Implementational.into(),
-                    group: "imu".to_owned().into(),
+                    group: Self::COMPONENT_NAME.to_owned().into(),
                     operation: MutatorOperation::Enable.into(),
                     statefulness: MutatorStatefulness::Transient.into(),
                     organization_custom_metadata: OrganizationCustomMetadata::new(
@@ -281,6 +282,7 @@ impl ImuSubsystem {
                         HashMap::from([
                             ("id".to_string(), id.satcat_id.into()),
                             ("name".to_string(), id.name.into()),
+                            ("component_name".to_string(), Self::COMPONENT_NAME.into()),
                         ]),
                     ),
                     params: Default::default(),

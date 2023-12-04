@@ -1,26 +1,28 @@
 use modality_api::TimelineId;
+use modality_mutator_protocol::descriptor::owned::*;
 use nav_types::{NVector, WGS84};
 use oorandom::Rand32;
 use serde::Serialize;
+use std::collections::HashMap;
 use tracing::warn;
 
 use crate::{
     channel::{Receiver, Sender, TracedMessage},
     ground_station::Relayed,
     modality::{kv, AttrsBuilder, MODALITY},
+    mutator::GenericBooleanMutator,
     point_failure::{PointFailure, PointFailureConfig, PointFailureThresholdOperator},
+    satellite::temperature_sensor::{
+        TemperatureSensor, TemperatureSensorConfig, TemperatureSensorModel,
+    },
     satellite::{SatelliteEnvironment, SatelliteId, SatelliteSharedState},
     system::{GroundToSatMessage, SatToGroundMessage},
     units::{Ratio, Temperature, Time, Timestamp},
     SimulationComponent,
 };
 
-use super::temperature_sensor::{
-    TemperatureSensor, TemperatureSensorConfig, TemperatureSensorModel,
-};
-
 pub struct CommsSubsystem {
-    _config: CommsConfig,
+    config: CommsConfig,
     cmd_rx: Receiver<CommsCommand>,
     res_tx: Sender<CommsResponse>,
     sat_to_ground: Sender<SatToGroundMessage>,
@@ -40,7 +42,7 @@ pub struct CommsSubsystem {
     ground_transceiver_failure: Option<PointFailure<Time>>,
     ground_transceiver_partial_failure: Option<(PointFailure<Time>, Ratio)>,
     rtc_degraded: Option<PointFailure<Temperature>>,
-    watchdog_out_of_sync: Option<PointFailure<Time>>,
+    watchdog_out_of_sync: Option<GenericBooleanMutator>,
 }
 
 impl CommsSubsystem {
@@ -57,33 +59,28 @@ impl CommsSubsystem {
         let temp_sensor = TemperatureSensor::new(config.temperature_sensor_config);
         let gps_offline_rtc_drift = config
             .fault_config
+            .gps_offline_rtc_drift
             .as_ref()
-            .and_then(|c| c.gps_offline_rtc_drift.as_ref())
             .map(|(pf_config, val)| (PointFailure::new(pf_config.clone()), *val));
         let gps_offline = config
             .fault_config
+            .gps_offline
             .as_ref()
-            .and_then(|c| c.gps_offline.as_ref())
             .map(|pf_config| PointFailure::new(pf_config.clone()));
         let ground_transceiver_failure = config
             .fault_config
+            .ground_transceiver_failure
             .as_ref()
-            .and_then(|c| c.ground_transceiver_failure.as_ref())
             .map(|pf_config| PointFailure::new(pf_config.clone()));
         let ground_transceiver_partial_failure = config
             .fault_config
+            .ground_transceiver_partial_failure
             .as_ref()
-            .and_then(|c| c.ground_transceiver_partial_failure.as_ref())
             .map(|(pf_config, val)| (PointFailure::new(pf_config.clone()), *val));
         let rtc_degraded = config
             .fault_config
+            .rtc_degraded
             .as_ref()
-            .and_then(|c| c.rtc_degraded.as_ref())
-            .map(|pf_config| PointFailure::new(pf_config.clone()));
-        let watchdog_out_of_sync = config
-            .fault_config
-            .as_ref()
-            .and_then(|c| c.watchdog_out_of_sync.as_ref())
             .map(|pf_config| PointFailure::new(pf_config.clone()));
 
         if let (Some(partial_failure), Some(complete_failure)) = (
@@ -118,15 +115,11 @@ impl CommsSubsystem {
             }
         }
 
-        let rng_seed = config
-            .fault_config
-            .as_ref()
-            .map(|c| c.rng_seed)
-            .unwrap_or(0);
+        let rng_seed = config.fault_config.rng_seed;
         Self {
             cmd_rx,
             res_tx,
-            _config: config,
+            config,
             sat_to_ground,
             ground_to_sat,
             timeline,
@@ -143,7 +136,8 @@ impl CommsSubsystem {
             ground_transceiver_failure,
             ground_transceiver_partial_failure,
             rtc_degraded,
-            watchdog_out_of_sync,
+            // Mutators are initialized in init_fault_models at sim-init time
+            watchdog_out_of_sync: None,
         }
     }
 
@@ -173,9 +167,35 @@ impl CommsSubsystem {
             pf.set_context(base_ctx);
             pf.add_context("name", "rtc_degraded");
         }
-        if let Some(pf) = self.watchdog_out_of_sync.as_mut() {
-            pf.set_context(base_ctx);
-            pf.add_context("name", "watchdog_out_of_sync");
+
+        // Construct mutators at sim-init time so we have access to SatelliteId/env details
+        // to qualify the mutator descriptors
+        self.watchdog_out_of_sync =
+            self.config
+                .fault_config
+                .watchdog_out_of_sync
+                .then_some(GenericBooleanMutator::new(OwnedMutatorDescriptor {
+                    name: "Comms watchdog execution out-of-sync".to_owned().into(),
+                    description: "Sets the Comms watchdog execution out-of-sync error register bit"
+                        .to_owned()
+                        .into(),
+                    layer: MutatorLayer::Implementational.into(),
+                    group: Self::COMPONENT_NAME.to_owned().into(),
+                    operation: MutatorOperation::Enable.into(),
+                    statefulness: MutatorStatefulness::Transient.into(),
+                    organization_custom_metadata: OrganizationCustomMetadata::new(
+                        "satellite".to_string(),
+                        HashMap::from([
+                            ("id".to_string(), id.satcat_id.into()),
+                            ("name".to_string(), id.name.into()),
+                            ("component_name".to_string(), Self::COMPONENT_NAME.into()),
+                        ]),
+                    ),
+                    params: Default::default(),
+                }));
+
+        if let Some(m) = &self.watchdog_out_of_sync {
+            MODALITY.register_mutator(m);
         }
     }
 
@@ -212,10 +232,11 @@ impl CommsSubsystem {
             }
         }
 
-        if let Some(pf) = self.watchdog_out_of_sync.as_mut() {
-            let fault_active = pf.update(dt, rel_time);
-            self.error_register.out_of_sync = fault_active;
-        }
+        self.error_register.out_of_sync = self
+            .watchdog_out_of_sync
+            .as_ref()
+            .map(|m| m.is_active())
+            .unwrap_or(false);
     }
 
     fn hard_reset(&mut self, rel_time: Time) {
@@ -245,9 +266,8 @@ impl CommsSubsystem {
             pf.reset();
         }
 
-        if let Some(pf) = self.watchdog_out_of_sync.as_mut() {
-            // One-shot, disable further activations
-            pf.set_disabled(true);
+        if let Some(m) = self.watchdog_out_of_sync.as_mut() {
+            MODALITY.clear_mutation(m);
         }
 
         // Reset to initial temperature
@@ -346,12 +366,12 @@ pub struct CommsErrorRegister {
 #[derive(Debug, Clone)]
 pub struct CommsConfig {
     pub temperature_sensor_config: TemperatureSensorConfig,
-    pub fault_config: Option<CommsFaultConfig>,
+    pub fault_config: CommsFaultConfig,
 }
 
 /// Parameters for the comms subsystem point failures.
 /// See the requirements doc, sections 1.3.4.7-1.3.4.11.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CommsFaultConfig {
     /// Seed for the PRNG.
     pub rng_seed: u32,
@@ -389,9 +409,9 @@ pub struct CommsFaultConfig {
     /// Note that multiple point failures can accumulate RTC drift.
     pub rtc_degraded: Option<PointFailureConfig<Temperature>>,
 
-    /// Parameters for the data watchdog execution out-of-sync point failure.
+    /// Enable the data watchdog execution out-of-sync mutator.
     /// See sections 1.3.4.2 of the requirements doc.
-    pub watchdog_out_of_sync: Option<PointFailureConfig<Time>>,
+    pub watchdog_out_of_sync: bool,
 }
 
 impl<'a> SimulationComponent<'a> for CommsSubsystem {

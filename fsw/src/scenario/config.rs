@@ -196,39 +196,45 @@ impl Config {
             .temperature_sensor(&cfg.temperature_sensor)
             .unwrap()
             .into();
-        let fault_config = cfg.fault.as_ref().map(|f| comms::CommsFaultConfig {
-            rng_seed: f.rng_seed.unwrap_or(0),
-            gps_offline_rtc_drift: f.gps_offline_rtc_drift.as_ref().map(|f| {
-                (
-                    self.point_failure(&f.name).map(|fc| fc.into()).unwrap(),
-                    Ratio::from_f64(f.value),
-                )
-            }),
-            gps_offline: f
-                .gps_offline
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            ground_transceiver_failure: f
-                .ground_transceiver_failure
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            ground_transceiver_partial_failure: f.ground_transceiver_partial_failure.as_ref().map(
-                |f| {
+        let fault_config = cfg
+            .fault
+            .as_ref()
+            .map(|f| comms::CommsFaultConfig {
+                rng_seed: f.rng_seed.unwrap_or(0),
+                gps_offline_rtc_drift: f.gps_offline_rtc_drift.as_ref().map(|f| {
                     (
                         self.point_failure(&f.name).map(|fc| fc.into()).unwrap(),
                         Ratio::from_f64(f.value),
                     )
-                },
-            ),
-            rtc_degraded: f
-                .rtc_degraded
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            watchdog_out_of_sync: f
-                .watchdog_out_of_sync
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-        });
+                }),
+                gps_offline: f
+                    .gps_offline
+                    .as_ref()
+                    .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
+                ground_transceiver_failure: f
+                    .ground_transceiver_failure
+                    .as_ref()
+                    .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
+                ground_transceiver_partial_failure: f
+                    .ground_transceiver_partial_failure
+                    .as_ref()
+                    .map(|f| {
+                        (
+                            self.point_failure(&f.name).map(|fc| fc.into()).unwrap(),
+                            Ratio::from_f64(f.value),
+                        )
+                    }),
+                rtc_degraded: f
+                    .rtc_degraded
+                    .as_ref()
+                    .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
+                watchdog_out_of_sync: f
+                    .watchdog_out_of_sync
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
+            })
+            .unwrap_or_default();
         Some(comms::CommsConfig {
             temperature_sensor_config,
             fault_config,

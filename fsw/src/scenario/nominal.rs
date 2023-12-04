@@ -72,7 +72,7 @@ pub fn satellite_config(spacecraft_index: SpacecraftIndex) -> SatelliteConfig {
                     night: TemperatureIntervalRate::from_degrees_celsius_per_second(-0.0001),
                 }),
             },
-            fault_config: None,
+            fault_config: Default::default(),
         },
         vision_config: VisionConfig {
             scanner_field_of_view_angle: if id.is_goes() {
