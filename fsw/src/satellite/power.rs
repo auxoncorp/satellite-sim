@@ -413,7 +413,7 @@ mod tests {
                     night: TemperatureIntervalRate::from_degrees_celsius_per_second(-0.0001),
                 }),
             },
-            fault_config: None,
+            fault_config: Default::default(),
         };
 
         let mut power_system =

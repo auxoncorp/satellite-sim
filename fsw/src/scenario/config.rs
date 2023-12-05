@@ -735,7 +735,7 @@ mod tests {
         hold-period = 20.0
 
         [[mutator]]
-        name = 'imu-wdt-sync'
+        name = 'm0'
         enabled = true
 
         [[power-subsystem]]
@@ -747,7 +747,7 @@ mod tests {
         system-load = 5.3
         temperature-sensor = 'ts1'
             [power-subsystem.fault]
-            watchdog-out-of-sync = 'pf0'
+            watchdog-out-of-sync = 'm0'
                 [power-subsystem.fault.solar-panel-degraded]
                 name = 'pf1'
                 value = 2.1
@@ -761,7 +761,7 @@ mod tests {
         collect-timeout = 4.8
         temperature-sensor = 'ts1'
             [compute-subsystem.fault]
-            watchdog-out-of-sync = 'pf0'
+            watchdog-out-of-sync = 'm0'
 
         [[comms-subsystem]]
         name = 'comms0'
@@ -770,7 +770,7 @@ mod tests {
             rng-seed = 11
             gps-offline = 'pf1'
             rtc-degraded = 'pf1'
-            watchdog-out-of-sync = 'pf0'
+            watchdog-out-of-sync = 'm0'
             ground-transceiver-failure = 'pf0'
                 [comms-subsystem.fault.ground-transceiver-partial-failure]
                 name = 'pf1'
@@ -794,8 +794,7 @@ mod tests {
             focus-camera-gimbal = 'pf1'
             focus-camera-constant-temperature-after-reset = 22.0
             scanner-camera-constant-temperature-after-reset = 33.0
-            watchdog-out-of-sync = 'pf0'
-            watchdog-out-of-sync-recurring = true
+            watchdog-out-of-sync = 'm0'
 
         [[imu-subsystem]]
         name = 'imu0'
@@ -804,7 +803,7 @@ mod tests {
             degraded-state = 'pf0'
             data-inconsistency = 'pf1'
             constant-temperature-after-reset = 33.0
-            watchdog-out-of-sync = 'imu-wdt-sync'
+            watchdog-out-of-sync = 'm0'
 
         [[satellite]]
         id = 'GALAXY-1'
