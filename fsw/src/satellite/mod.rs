@@ -190,12 +190,6 @@ impl From<SatCatId> for AttrVal {
     }
 }
 
-impl From<SatCatId> for modality_mutator_protocol::attrs::AttrVal {
-    fn from(val: SatCatId) -> Self {
-        (val.0 as i64).into()
-    }
-}
-
 #[derive(Debug)]
 pub struct SatelliteId {
     /// https://en.wikipedia.org/wiki/Satellite_Catalog_Number

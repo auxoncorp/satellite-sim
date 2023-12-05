@@ -127,24 +127,29 @@ impl Config {
             .temperature_sensor(&cfg.temperature_sensor)
             .unwrap()
             .into();
-        let fault_config = cfg.fault.as_ref().map(|f| power::PowerFaultConfig {
-            solar_panel_degraded: f.solar_panel_degraded.as_ref().map(|f| {
-                (
-                    self.point_failure(&f.name).map(|fc| fc.into()).unwrap(),
-                    ElectricCurrent::from_amps(f.value),
-                )
-            }),
-            battery_degraded: f.solar_panel_degraded.as_ref().map(|f| {
-                (
-                    self.point_failure(&f.name).map(|fc| fc.into()).unwrap(),
-                    PotentialOverCharge::from_volts_per_coulomb(f.value),
-                )
-            }),
-            watchdog_out_of_sync: f
-                .watchdog_out_of_sync
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-        });
+        let fault_config = cfg
+            .fault
+            .as_ref()
+            .map(|f| power::PowerFaultConfig {
+                solar_panel_degraded: f.solar_panel_degraded.as_ref().map(|f| {
+                    (
+                        self.point_failure(&f.name).map(|fc| fc.into()).unwrap(),
+                        ElectricCurrent::from_amps(f.value),
+                    )
+                }),
+                battery_degraded: f.solar_panel_degraded.as_ref().map(|f| {
+                    (
+                        self.point_failure(&f.name).map(|fc| fc.into()).unwrap(),
+                        PotentialOverCharge::from_volts_per_coulomb(f.value),
+                    )
+                }),
+                watchdog_out_of_sync: f
+                    .watchdog_out_of_sync
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
+            })
+            .unwrap_or_default();
         Some(power::PowerConfig {
             battery_max_charge: ElectricCharge::from_amp_hours(cfg.battery_max_charge),
             battery_max_voltage: ElectricPotential::from_volts(cfg.battery_max_voltage),
