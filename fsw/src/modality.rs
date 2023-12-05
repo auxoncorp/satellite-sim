@@ -429,12 +429,12 @@ impl ModalityClient {
     /// so that any mutation plane related events end up on the appropriate timeline.
     pub fn process_mutation_plane_messages<'a, M, I>(&self, mutators: I)
     where
-        M: MutatorActuatorDescriptor + 'a,
-        I: Iterator<Item = &'a mut M> + 'a,
+        M: MutatorActuatorDescriptor + ?Sized + 'a,
+        I: Iterator<Item = Option<&'a mut M>> + 'a,
     {
         Self::INNER.with(|inner| {
             if let Some(inner) = inner.borrow_mut().as_mut() {
-                for mutator in mutators {
+                for mutator in mutators.flatten() {
                     let mutator_id = mutator.mutator_id();
                     let mailbox = inner
                         .mutator_messages
@@ -898,7 +898,7 @@ fn mutation_proto_parent_url() -> Result<Url, MutationProtocolUrlError> {
     }
 }
 
-fn mutator_announcement<M: MutatorActuatorDescriptor>(
+fn mutator_announcement<M: MutatorActuatorDescriptor + ?Sized>(
     participant_id: ParticipantId,
     m: &M,
 ) -> RootwardsMessage {

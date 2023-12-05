@@ -5,7 +5,7 @@ use modality_mutator_protocol::{
 };
 use std::collections::BTreeMap;
 
-pub use generic_mutator::GenericBooleanMutator;
+pub use generic_mutator::{GenericBooleanMutator, GenericSetFloatMutator};
 pub use util::watchdog_out_of_sync_descriptor;
 
 mod generic_mutator;
@@ -22,4 +22,6 @@ pub trait MutatorActuator {
     fn reset(&mut self);
 }
 
-pub trait MutatorActuatorDescriptor: MutatorActuator + MutatorDescriptor {}
+pub trait MutatorActuatorDescriptor: MutatorActuator + MutatorDescriptor {
+    fn as_dyn(&mut self) -> &mut dyn MutatorActuatorDescriptor;
+}

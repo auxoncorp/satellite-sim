@@ -27,7 +27,11 @@ impl GenericBooleanMutator {
     }
 }
 
-impl MutatorActuatorDescriptor for GenericBooleanMutator {}
+impl MutatorActuatorDescriptor for GenericBooleanMutator {
+    fn as_dyn(&mut self) -> &mut dyn MutatorActuatorDescriptor {
+        self
+    }
+}
 
 impl MutatorDescriptor for GenericBooleanMutator {
     fn get_description_attributes(&self) -> Box<dyn Iterator<Item = (AttrKey, AttrVal)> + '_> {
@@ -50,5 +54,66 @@ impl MutatorActuator for GenericBooleanMutator {
 
     fn reset(&mut self) {
         self.is_active = false;
+    }
+}
+
+/// A generic set-float-value mutator
+#[derive(Debug)]
+pub struct GenericSetFloatMutator {
+    mutator_id: MutatorId,
+    descriptor: OwnedMutatorDescriptor,
+    active_mutation: Option<f64>,
+}
+
+impl GenericSetFloatMutator {
+    pub fn new(descriptor: OwnedMutatorDescriptor) -> Self {
+        assert!(
+            descriptor.params.len() == 1,
+            "GenericSetFloatMutator expects a single float parameter"
+        );
+        Self {
+            mutator_id: MutatorId::allocate(),
+            descriptor,
+            active_mutation: None,
+        }
+    }
+
+    pub fn active_mutation(&self) -> Option<f64> {
+        self.active_mutation
+    }
+}
+
+impl MutatorActuatorDescriptor for GenericSetFloatMutator {
+    fn as_dyn(&mut self) -> &mut dyn MutatorActuatorDescriptor {
+        self
+    }
+}
+
+impl MutatorDescriptor for GenericSetFloatMutator {
+    fn get_description_attributes(&self) -> Box<dyn Iterator<Item = (AttrKey, AttrVal)> + '_> {
+        self.descriptor.clone().into_description_attributes()
+    }
+}
+
+impl MutatorActuator for GenericSetFloatMutator {
+    fn mutator_id(&self) -> MutatorId {
+        self.mutator_id
+    }
+
+    fn inject(&mut self, _mutation_id: MutationId, params: MutatorParams) {
+        assert!(
+            params.len() == 1,
+            "GenericSetFloatMutator expects a single float parameter"
+        );
+        let (_key, val) = params.into_iter().take(1).next().unwrap();
+        if let AttrVal::Float(f) = val {
+            self.active_mutation = Some(f.0);
+        } else {
+            panic!("GenericSetFloatMutator expects a single float parameter, got {val}");
+        }
+    }
+
+    fn reset(&mut self) {
+        self.active_mutation = None;
     }
 }

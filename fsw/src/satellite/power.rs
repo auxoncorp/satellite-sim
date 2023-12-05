@@ -1,11 +1,15 @@
-use modality_api::TimelineId;
+use modality_api::{AttrType, TimelineId};
+use modality_mutator_protocol::descriptor::owned::*;
 use serde::Serialize;
 use tracing::warn;
 
 use crate::{
     channel::{Receiver, Sender, TracedMessage},
     modality::{kv, AttrsBuilder, MODALITY},
-    mutator::{watchdog_out_of_sync_descriptor, GenericBooleanMutator},
+    mutator::{
+        watchdog_out_of_sync_descriptor, GenericBooleanMutator, GenericSetFloatMutator,
+        MutatorActuatorDescriptor,
+    },
     point_failure::{PointFailure, PointFailureConfig},
     satellite::temperature_sensor::{TemperatureSensor, TemperatureSensorConfig},
     satellite::{SatelliteEnvironment, SatelliteId, SatelliteSharedState},
@@ -30,7 +34,7 @@ pub struct PowerSubsystem {
     temp_sensor: TemperatureSensor,
     error_register: PowerErrorRegister,
 
-    solar_panel_degraded: Option<(PointFailure<Time>, ElectricCurrent)>,
+    solar_panel_degraded: Option<GenericSetFloatMutator>,
     battery_degraded: Option<(PointFailure<Temperature>, PotentialOverCharge)>,
     watchdog_out_of_sync: Option<GenericBooleanMutator>,
 }
@@ -53,28 +57,12 @@ impl PowerSubsystem {
         let battery_voltage = config.battery_max_voltage;
         let timeline = TimelineId::allocate();
         let temp_sensor = TemperatureSensor::new(config.temperature_sensor_config);
-        let solar_panel_degraded = config
-            .fault_config
-            .solar_panel_degraded
-            .as_ref()
-            .map(|(pfc, val)| (PointFailure::new(pfc.clone()), *val));
         let battery_degraded = config
             .fault_config
             .battery_degraded
             .as_ref()
             .map(|(pfc, val)| (PointFailure::new(pfc.clone()), *val));
 
-        if let Some(spcr) = config
-            .fault_config
-            .solar_panel_degraded
-            .as_ref()
-            .map(|(_, spcr)| *spcr)
-        {
-            assert!(
-                spcr < config.solar_panel_charge_rate,
-                "Solar panel degraded fault charge rate should be less than the config amount"
-            );
-        }
         if let Some(bdf) = config
             .fault_config
             .battery_degraded
@@ -95,18 +83,20 @@ impl PowerSubsystem {
             battery_voltage,
             temp_sensor,
             error_register: PowerErrorRegister { out_of_sync: false },
-            solar_panel_degraded,
             battery_degraded,
             // Mutators are initialized in init_fault_models at sim-init time
+            solar_panel_degraded: None,
             watchdog_out_of_sync: None,
         }
     }
 
     fn solar_panel_charge_rate(&self) -> ElectricCurrent {
-        if let Some((pf, value_when_active)) = self.solar_panel_degraded.as_ref() {
-            if pf.is_active() {
-                return *value_when_active;
-            }
+        if let Some(active_mutation) = self
+            .solar_panel_degraded
+            .as_ref()
+            .and_then(|m| m.active_mutation())
+        {
+            return ElectricCurrent::from_amps(active_mutation);
         }
         self.config.solar_panel_charge_rate
     }
@@ -126,10 +116,6 @@ impl PowerSubsystem {
             ("component_name", Self::COMPONENT_NAME),
         ];
 
-        if let Some((pf, _)) = self.solar_panel_degraded.as_mut() {
-            pf.set_context(base_ctx);
-            pf.add_context("name", "solar_panel_degraded");
-        }
         if let Some((pf, _)) = self.battery_degraded.as_mut() {
             pf.set_context(base_ctx);
             pf.add_context("name", "battery_degraded");
@@ -137,6 +123,43 @@ impl PowerSubsystem {
 
         // Construct mutators at sim-init time so we have access to SatelliteId/env details
         // to qualify the mutator descriptors
+        self.solar_panel_degraded =
+            self.config
+                .fault_config
+                .solar_panel_degraded
+                .then_some(GenericSetFloatMutator::new(OwnedMutatorDescriptor {
+                    name: format!("{} solar panel degraded charge rate", Self::COMPONENT_NAME)
+                        .into(),
+                    description: "Sets the solar panel charge rate".to_owned().into(),
+                    layer: MutatorLayer::Implementational.into(),
+                    group: Self::COMPONENT_NAME.to_owned().into(),
+                    operation: MutatorOperation::SetToValue.into(),
+                    statefulness: MutatorStatefulness::Permanent.into(),
+                    organization_custom_metadata: OrganizationCustomMetadata::new(
+                        "satellite".to_string(),
+                        [
+                            ("id".to_string(), id.satcat_id.into()),
+                            ("name".to_string(), id.name.into()),
+                            ("component_name".to_string(), Self::COMPONENT_NAME.into()),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    params: vec![OwnedMutatorParamDescriptor::new(
+                        AttrType::Float,
+                        "electric_current".to_owned(),
+                    )
+                    .unwrap()
+                    .with_description("Solar panel charge rate electric current [amps]")
+                    .with_value_min(0.0)
+                    .with_value_max(self.config.solar_panel_charge_rate.as_amps())
+                    .with_least_effect_value(self.config.solar_panel_charge_rate.as_amps())],
+                }));
+
+        if let Some(m) = &self.solar_panel_degraded {
+            MODALITY.register_mutator(m);
+        }
+
         self.watchdog_out_of_sync =
             self.config
                 .fault_config
@@ -151,11 +174,7 @@ impl PowerSubsystem {
         }
     }
 
-    fn update_fault_models(&mut self, dt: Time, rel_time: Time) {
-        if let Some((pf, _)) = self.solar_panel_degraded.as_mut() {
-            pf.update(dt, rel_time);
-        }
-
+    fn update_fault_models(&mut self, dt: Time) {
         if let Some((pf, _)) = self.battery_degraded.as_mut() {
             pf.update(dt, self.temp_sensor.temperature());
         }
@@ -174,9 +193,6 @@ impl PowerSubsystem {
         self.error_register.out_of_sync = false;
 
         // Reset point failures
-        if let Some((pf, _)) = self.solar_panel_degraded.as_mut() {
-            pf.reset();
-        }
         if let Some((pf, _)) = self.battery_degraded.as_mut() {
             pf.reset();
         }
@@ -215,12 +231,9 @@ pub struct PowerConfig {
 /// See the requirements doc, sections 1.3.4.5 and 1.3.4.6.
 #[derive(Debug, Clone, Default)]
 pub struct PowerFaultConfig {
-    /// Parameters for the solar panel degraded point failure.
+    /// Enable the solar panel degraded mutator.
     /// See sections 1.3.4.5 of the requirements doc.
-    /// This point failure is motivated by relative time (it activates after configured time period
-    /// elapses).
-    /// It uses the provided solar panel charge rate when active.
-    pub solar_panel_degraded: Option<(PointFailureConfig<Time>, ElectricCurrent)>,
+    pub solar_panel_degraded: bool,
 
     /// Parameters for the battery degraded point failure.
     /// See sections 1.3.4.6 of the requirements doc.
@@ -321,9 +334,11 @@ impl<'a> SimulationComponent<'a> for PowerSubsystem {
     fn step(&mut self, dt: Time, env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
 
-        if let Some(m) = &mut self.watchdog_out_of_sync {
-            MODALITY.process_mutation_plane_messages(std::iter::once(m));
-        }
+        let mutators = [
+            self.watchdog_out_of_sync.as_mut().map(|m| m.as_dyn()),
+            self.solar_panel_degraded.as_mut().map(|m| m.as_dyn()),
+        ];
+        MODALITY.process_mutation_plane_messages(mutators.into_iter());
 
         let css = env
             .fsw_data
@@ -333,7 +348,7 @@ impl<'a> SimulationComponent<'a> for PowerSubsystem {
 
         self.temp_sensor.step(dt, env, sat);
 
-        self.update_fault_models(dt, env.sim_info.relative_time);
+        self.update_fault_models(dt);
 
         let illumination = if css.valid && !self.error_register.out_of_sync {
             let illum = css.illum.abs();

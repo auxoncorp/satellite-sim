@@ -131,13 +131,12 @@ impl Config {
             .fault
             .as_ref()
             .map(|f| power::PowerFaultConfig {
-                solar_panel_degraded: f.solar_panel_degraded.as_ref().map(|f| {
-                    (
-                        self.point_failure(&f.name).map(|fc| fc.into()).unwrap(),
-                        ElectricCurrent::from_amps(f.value),
-                    )
-                }),
-                battery_degraded: f.solar_panel_degraded.as_ref().map(|f| {
+                solar_panel_degraded: f
+                    .solar_panel_degraded
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
+                battery_degraded: f.battery_degraded.as_ref().map(|f| {
                     (
                         self.point_failure(&f.name).map(|fc| fc.into()).unwrap(),
                         PotentialOverCharge::from_volts_per_coulomb(f.value),
@@ -407,7 +406,7 @@ pub struct PowerSubsystem {
 #[serde(default, rename_all = "kebab-case")]
 pub struct PowerFault {
     pub watchdog_out_of_sync: Option<String>,
-    pub solar_panel_degraded: Option<PointFailureActivatedValue>,
+    pub solar_panel_degraded: Option<String>,
     pub battery_degraded: Option<PointFailureActivatedValue>,
 }
 
@@ -748,9 +747,7 @@ mod tests {
         temperature-sensor = 'ts1'
             [power-subsystem.fault]
             watchdog-out-of-sync = 'm0'
-                [power-subsystem.fault.solar-panel-degraded]
-                name = 'pf1'
-                value = 2.1
+            solar-panel-degraded = 'm0'
                 [power-subsystem.fault.battery-degraded]
                 name = 'pf0'
                 value = 1.1
