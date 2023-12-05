@@ -6,8 +6,10 @@ use modality_mutator_protocol::{
 use std::collections::BTreeMap;
 
 pub use generic_mutator::GenericBooleanMutator;
+pub use util::watchdog_out_of_sync_descriptor;
 
 mod generic_mutator;
+mod util;
 
 pub type MutatorParams = BTreeMap<AttrKey, AttrVal>;
 

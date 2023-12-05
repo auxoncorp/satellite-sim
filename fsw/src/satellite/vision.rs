@@ -1,5 +1,4 @@
 use modality_api::TimelineId;
-use modality_mutator_protocol::descriptor::owned::*;
 use na::{Isometry3, Point3, Translation3, UnitQuaternion, Vector3};
 use parry3d_f64::{query::PointQuery, shape::Cone};
 use serde::Serialize;
@@ -10,7 +9,7 @@ use types42::prelude::GpsIndex;
 use crate::{
     channel::{Receiver, Sender, TracedMessage},
     modality::{kv, AttrsBuilder, MODALITY},
-    mutator::GenericBooleanMutator,
+    mutator::{watchdog_out_of_sync_descriptor, GenericBooleanMutator},
     point_failure::{PointFailure, PointFailureConfig},
     satellite::temperature_sensor::{TemperatureSensor, TemperatureSensorConfig},
     satellite::{SatelliteEnvironment, SatelliteId, SatelliteSharedState},
@@ -294,26 +293,10 @@ impl VisionSubsystem {
             self.config
                 .fault_config
                 .watchdog_out_of_sync
-                .then_some(GenericBooleanMutator::new(OwnedMutatorDescriptor {
-                    name: "Vision watchdog execution out-of-sync".to_owned().into(),
-                    description:
-                        "Sets the vision watchdog execution out-of-sync error register bit"
-                            .to_owned()
-                            .into(),
-                    layer: MutatorLayer::Implementational.into(),
-                    group: Self::COMPONENT_NAME.to_owned().into(),
-                    operation: MutatorOperation::Enable.into(),
-                    statefulness: MutatorStatefulness::Transient.into(),
-                    organization_custom_metadata: OrganizationCustomMetadata::new(
-                        "satellite".to_string(),
-                        HashMap::from([
-                            ("id".to_string(), id.satcat_id.into()),
-                            ("name".to_string(), id.name.into()),
-                            ("component_name".to_string(), Self::COMPONENT_NAME.into()),
-                        ]),
-                    ),
-                    params: Default::default(),
-                }));
+                .then_some(GenericBooleanMutator::new(watchdog_out_of_sync_descriptor(
+                    Self::COMPONENT_NAME,
+                    id,
+                )));
 
         if let Some(m) = &self.watchdog_out_of_sync {
             MODALITY.register_mutator(m);

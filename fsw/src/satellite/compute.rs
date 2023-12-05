@@ -1,13 +1,11 @@
 use modality_api::TimelineId;
-use modality_mutator_protocol::descriptor::owned::*;
 use serde::Serialize;
-use std::collections::HashMap;
 use tracing::warn;
 
 use crate::{
     channel::{Receiver, Sender},
     modality::{AttrsBuilder, MODALITY},
-    mutator::GenericBooleanMutator,
+    mutator::{watchdog_out_of_sync_descriptor, GenericBooleanMutator},
     satellite::{SatelliteEnvironment, SatelliteId, SatelliteSharedState},
     system::{
         Detections, GroundToSatMessage, SatErrorFlag, SatToGroundMessage, SatToGroundMessageBody,
@@ -134,26 +132,10 @@ impl ComputeSubsystem {
             self.config
                 .fault_config
                 .watchdog_out_of_sync
-                .then_some(GenericBooleanMutator::new(OwnedMutatorDescriptor {
-                    name: "Compute watchdog execution out-of-sync".to_owned().into(),
-                    description:
-                        "Sets the compute watchdog execution out-of-sync error register bit"
-                            .to_owned()
-                            .into(),
-                    layer: MutatorLayer::Implementational.into(),
-                    group: Self::COMPONENT_NAME.to_owned().into(),
-                    operation: MutatorOperation::Enable.into(),
-                    statefulness: MutatorStatefulness::Transient.into(),
-                    organization_custom_metadata: OrganizationCustomMetadata::new(
-                        "satellite".to_string(),
-                        HashMap::from([
-                            ("id".to_string(), id.satcat_id.into()),
-                            ("name".to_string(), id.name.into()),
-                            ("component_name".to_string(), Self::COMPONENT_NAME.into()),
-                        ]),
-                    ),
-                    params: Default::default(),
-                }));
+                .then_some(GenericBooleanMutator::new(watchdog_out_of_sync_descriptor(
+                    Self::COMPONENT_NAME,
+                    id,
+                )));
 
         if let Some(m) = &self.watchdog_out_of_sync {
             MODALITY.register_mutator(m);
