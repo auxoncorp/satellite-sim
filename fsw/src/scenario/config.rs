@@ -175,12 +175,17 @@ impl Config {
             .temperature_sensor(&cfg.temperature_sensor)
             .unwrap()
             .into();
-        let fault_config = cfg.fault.as_ref().map(|f| compute::ComputeFaultConfig {
-            watchdog_out_of_sync: f
-                .watchdog_out_of_sync
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-        });
+        let fault_config = cfg
+            .fault
+            .as_ref()
+            .map(|f| compute::ComputeFaultConfig {
+                watchdog_out_of_sync: f
+                    .watchdog_out_of_sync
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
+            })
+            .unwrap_or_default();
         Some(compute::ComputeConfig {
             telemetry_rate: Time::from_secs(cfg.telemetry_rate),
             collect_timeout: Time::from_secs(cfg.collect_timeout),

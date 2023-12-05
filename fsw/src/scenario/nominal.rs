@@ -60,7 +60,7 @@ pub fn satellite_config(spacecraft_index: SpacecraftIndex) -> SatelliteConfig {
                     night: TemperatureIntervalRate::from_degrees_celsius_per_second(-0.0001),
                 }),
             },
-            fault_config: None,
+            fault_config: Default::default(),
         },
         comms_config: CommsConfig {
             temperature_sensor_config: TemperatureSensorConfig {
