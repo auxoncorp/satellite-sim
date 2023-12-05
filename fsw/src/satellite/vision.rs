@@ -1,4 +1,5 @@
 use modality_api::TimelineId;
+use modality_mutator_protocol::descriptor::owned::*;
 use na::{Isometry3, Point3, Translation3, UnitQuaternion, Vector3};
 use parry3d_f64::{query::PointQuery, shape::Cone};
 use serde::Serialize;
@@ -9,14 +10,14 @@ use types42::prelude::GpsIndex;
 use crate::{
     channel::{Receiver, Sender, TracedMessage},
     modality::{kv, AttrsBuilder, MODALITY},
+    mutator::GenericBooleanMutator,
     point_failure::{PointFailure, PointFailureConfig},
+    satellite::temperature_sensor::{TemperatureSensor, TemperatureSensorConfig},
     satellite::{SatelliteEnvironment, SatelliteId, SatelliteSharedState},
     system::{CameraSourceId, Detections, IREvent},
     units::{Angle, ElectricPotential, LuminousIntensity, Temperature, Time},
     SimulationComponent,
 };
-
-use super::temperature_sensor::{TemperatureSensor, TemperatureSensorConfig};
 
 const PRIMARY_GPS: GpsIndex = 0;
 
@@ -57,9 +58,8 @@ pub struct VisionSubsystem {
     scanner_camera_offline: Option<PointFailure<ElectricPotential>>,
     focus_camera_offline: Option<PointFailure<ElectricPotential>>,
     focus_camera_gimbal: Option<PointFailure<Temperature>>,
-    #[allow(unused)]
-    watchdog_out_of_sync: Option<PointFailure<Time>>,
-    watchdog_out_of_sync_threshold: Option<Time>,
+
+    watchdog_out_of_sync: Option<GenericBooleanMutator>,
 
     event_tx: Sender<Detections>,
     cmd_rx: Receiver<VisionCommand>,
@@ -74,7 +74,7 @@ pub struct VisionConfig {
     pub focus_camera_temperature_sensor_config: TemperatureSensorConfig,
     pub scanner_camera_temperature_sensor_config: TemperatureSensorConfig,
     pub focus_camera_disabled: bool,
-    pub fault_config: Option<VisionFaultConfig>,
+    pub fault_config: VisionFaultConfig,
 }
 
 /// Parameters for the vision subsystem point failures.
@@ -113,13 +113,9 @@ pub struct VisionFaultConfig {
     /// point failures from recurring.
     pub scanner_camera_constant_temperature_after_reset: Option<Temperature>,
 
-    /// Parameters for the data watchdog execution out-of-sync point failure.
+    /// Enable the data watchdog execution out-of-sync mutator.
     /// See sections 1.3.4.2 of the requirements doc.
-    pub watchdog_out_of_sync: Option<PointFailureConfig<Time>>,
-
-    /// Whether the `watchdog_out_of_sync` point failure
-    /// is recurring or not. Defaults to false.
-    pub watchdog_out_of_sync_recurring: Option<bool>,
+    pub watchdog_out_of_sync: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -209,30 +205,24 @@ impl VisionSubsystem {
 
         let active_cooling = config
             .fault_config
+            .active_cooling
             .as_ref()
-            .and_then(|c| c.active_cooling.as_ref())
             .map(|pfc| PointFailure::new(pfc.clone()));
         let scanner_camera_offline = config
             .fault_config
+            .scanner_camera_offline
             .as_ref()
-            .and_then(|c| c.scanner_camera_offline.as_ref())
             .map(|pfc| PointFailure::new(pfc.clone()));
         let focus_camera_offline = config
             .fault_config
+            .focus_camera_offline
             .as_ref()
-            .and_then(|c| c.focus_camera_offline.as_ref())
             .map(|pfc| PointFailure::new(pfc.clone()));
         let focus_camera_gimbal = config
             .fault_config
+            .focus_camera_gimbal
             .as_ref()
-            .and_then(|c| c.focus_camera_gimbal.as_ref())
             .map(|pfc| PointFailure::new(pfc.clone()));
-        let watchdog_out_of_sync = config
-            .fault_config
-            .as_ref()
-            .and_then(|c| c.watchdog_out_of_sync.as_ref())
-            .map(|pf_config| PointFailure::new(pf_config.clone()));
-        let watchdog_out_of_sync_threshold = watchdog_out_of_sync.as_ref().map(|pf| pf.threshold());
 
         Self {
             config,
@@ -249,8 +239,8 @@ impl VisionSubsystem {
             scanner_camera_offline,
             focus_camera_offline,
             focus_camera_gimbal,
-            watchdog_out_of_sync,
-            watchdog_out_of_sync_threshold,
+            // Mutators are initialized in init_fault_models at sim-init time
+            watchdog_out_of_sync: None,
             event_tx,
             cmd_rx,
             res_tx,
@@ -297,18 +287,40 @@ impl VisionSubsystem {
             pf.set_context(base_ctx);
             pf.add_context("name", "focus_camera_gimbal");
         }
-        if let Some(pf) = self.watchdog_out_of_sync.as_mut() {
-            pf.set_context(base_ctx);
-            pf.add_context("name", "watchdog_out_of_sync");
+
+        // Construct mutators at sim-init time so we have access to SatelliteId/env details
+        // to qualify the mutator descriptors
+        self.watchdog_out_of_sync =
+            self.config
+                .fault_config
+                .watchdog_out_of_sync
+                .then_some(GenericBooleanMutator::new(OwnedMutatorDescriptor {
+                    name: "Vision watchdog execution out-of-sync".to_owned().into(),
+                    description:
+                        "Sets the vision watchdog execution out-of-sync error register bit"
+                            .to_owned()
+                            .into(),
+                    layer: MutatorLayer::Implementational.into(),
+                    group: Self::COMPONENT_NAME.to_owned().into(),
+                    operation: MutatorOperation::Enable.into(),
+                    statefulness: MutatorStatefulness::Transient.into(),
+                    organization_custom_metadata: OrganizationCustomMetadata::new(
+                        "satellite".to_string(),
+                        HashMap::from([
+                            ("id".to_string(), id.satcat_id.into()),
+                            ("name".to_string(), id.name.into()),
+                            ("component_name".to_string(), Self::COMPONENT_NAME.into()),
+                        ]),
+                    ),
+                    params: Default::default(),
+                }));
+
+        if let Some(m) = &self.watchdog_out_of_sync {
+            MODALITY.register_mutator(m);
         }
     }
 
-    fn update_fault_models(
-        &mut self,
-        dt: Time,
-        rel_time: Time,
-        power_supply_voltage: ElectricPotential,
-    ) {
+    fn update_fault_models(&mut self, dt: Time, power_supply_voltage: ElectricPotential) {
         if let Some(pf) = self.active_cooling.as_mut() {
             pf.update(dt, self.scanner_cam_temp_sensor.temperature());
         }
@@ -325,13 +337,13 @@ impl VisionSubsystem {
             pf.update(dt, self.focus_cam_temp_sensor.temperature());
         }
 
-        if let Some(pf) = self.watchdog_out_of_sync.as_mut() {
-            let fault_active = pf.update(dt, rel_time);
-            self.error_register.out_of_sync = fault_active;
-        }
+        self.error_register.out_of_sync = self
+            .watchdog_out_of_sync
+            .as_ref()
+            .map(|m| m.is_active())
+            .unwrap_or(false);
     }
 
-    #[allow(dead_code)]
     fn hard_reset(&mut self, rel_time: Time) {
         warn!(?rel_time, "Vision hard reset");
 
@@ -356,30 +368,15 @@ impl VisionSubsystem {
         if let Some(pf) = self.focus_camera_gimbal.as_mut() {
             pf.reset();
         }
-        if let Some(pf) = self.watchdog_out_of_sync.as_mut() {
-            let watchdog_out_of_sync_recurring = self
-                .config
-                .fault_config
-                .as_ref()
-                .and_then(|c| c.watchdog_out_of_sync_recurring)
-                .unwrap_or(false);
 
-            pf.reset();
-
-            if watchdog_out_of_sync_recurring {
-                // Update the time threshold to now + dur
-                pf.set_threshold(self.watchdog_out_of_sync_threshold.unwrap() + rel_time);
-            } else {
-                // One-shot, disable further activations
-                pf.set_disabled(true);
-            }
+        if let Some(m) = self.watchdog_out_of_sync.as_mut() {
+            MODALITY.clear_mutation(m);
         }
 
         if let Some(constant_temperature_after_reset) = self
             .config
             .fault_config
-            .as_ref()
-            .and_then(|c| c.focus_camera_constant_temperature_after_reset)
+            .focus_camera_constant_temperature_after_reset
         {
             // Use a constant temperature model
             self.focus_cam_temp_sensor
@@ -392,8 +389,7 @@ impl VisionSubsystem {
         if let Some(constant_temperature_after_reset) = self
             .config
             .fault_config
-            .as_ref()
-            .and_then(|c| c.scanner_camera_constant_temperature_after_reset)
+            .scanner_camera_constant_temperature_after_reset
         {
             // Use a constant temperature model
             self.scanner_cam_temp_sensor
@@ -449,18 +445,23 @@ impl<'a> SimulationComponent<'a> for VisionSubsystem {
         }
     }
 
-    fn reset(&mut self, _env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
+    fn reset(&mut self, env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
         MODALITY.quick_event("reset");
+        self.hard_reset(env.sim_info.relative_time);
     }
 
     fn step(&mut self, dt: Time, env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
 
+        if let Some(m) = &mut self.watchdog_out_of_sync {
+            MODALITY.process_mutation_plane_messages(std::iter::once(m));
+        }
+
         self.scanner_cam_temp_sensor.step(dt, env, sat);
         self.focus_cam_temp_sensor.step(dt, env, sat);
 
-        self.update_fault_models(dt, env.sim_info.relative_time, sat.power_supply_voltage);
+        self.update_fault_models(dt, sat.power_supply_voltage);
 
         if let Some(cmd) = self.cmd_rx.recv() {
             match cmd {

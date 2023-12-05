@@ -131,7 +131,7 @@ pub fn satellite_config(spacecraft_index: SpacecraftIndex) -> SatelliteConfig {
                 ),
             },
             focus_camera_disabled: id.is_goes(),
-            fault_config: None,
+            fault_config: Default::default(),
         },
         imu_config: ImuConfig {
             temperature_sensor_config: TemperatureSensorConfig {

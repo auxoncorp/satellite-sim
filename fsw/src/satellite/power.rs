@@ -337,6 +337,11 @@ impl<'a> SimulationComponent<'a> for PowerSubsystem {
 
     fn step(&mut self, dt: Time, env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
+
+        if let Some(m) = &mut self.watchdog_out_of_sync {
+            MODALITY.process_mutation_plane_messages(std::iter::once(m));
+        }
+
         let css = env
             .fsw_data
             .css

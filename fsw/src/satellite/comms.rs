@@ -436,6 +436,10 @@ impl<'a> SimulationComponent<'a> for CommsSubsystem {
     fn step(&mut self, dt: Time, env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
         self.temp_sensor.step(dt, env, sat);
 
+        if let Some(m) = &mut self.watchdog_out_of_sync {
+            MODALITY.process_mutation_plane_messages(std::iter::once(m));
+        }
+
         // NOTE: This may need to move down, once we pull in mutation support, to occur after we tick the clock.
         self.update_fault_models(dt, env.sim_info.relative_time);
 

@@ -262,35 +262,39 @@ impl Config {
             .temperature_sensor(&cfg.scanner_camera_temperature_sensor)
             .unwrap()
             .into();
-        let fault_config = cfg.fault.as_ref().map(|f| vision::VisionFaultConfig {
-            active_cooling: f
-                .active_cooling
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            scanner_camera_offline: f
-                .scanner_camera_offline
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            focus_camera_offline: f
-                .focus_camera_offline
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            focus_camera_gimbal: f
-                .focus_camera_gimbal
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            focus_camera_constant_temperature_after_reset: f
-                .focus_camera_constant_temperature_after_reset
-                .map(Temperature::from_degrees_celsius),
-            scanner_camera_constant_temperature_after_reset: f
-                .scanner_camera_constant_temperature_after_reset
-                .map(Temperature::from_degrees_celsius),
-            watchdog_out_of_sync: f
-                .watchdog_out_of_sync
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            watchdog_out_of_sync_recurring: f.watchdog_out_of_sync_recurring,
-        });
+        let fault_config = cfg
+            .fault
+            .as_ref()
+            .map(|f| vision::VisionFaultConfig {
+                active_cooling: f
+                    .active_cooling
+                    .as_ref()
+                    .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
+                scanner_camera_offline: f
+                    .scanner_camera_offline
+                    .as_ref()
+                    .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
+                focus_camera_offline: f
+                    .focus_camera_offline
+                    .as_ref()
+                    .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
+                focus_camera_gimbal: f
+                    .focus_camera_gimbal
+                    .as_ref()
+                    .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
+                focus_camera_constant_temperature_after_reset: f
+                    .focus_camera_constant_temperature_after_reset
+                    .map(Temperature::from_degrees_celsius),
+                scanner_camera_constant_temperature_after_reset: f
+                    .scanner_camera_constant_temperature_after_reset
+                    .map(Temperature::from_degrees_celsius),
+                watchdog_out_of_sync: f
+                    .watchdog_out_of_sync
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
+            })
+            .unwrap_or_default();
 
         Some(vision::VisionConfig {
             scanner_field_of_view_angle: Angle::from_degrees(cfg.scanner_field_of_view),
