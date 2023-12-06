@@ -13,8 +13,7 @@ use crate::{
 
 /// Predict IR event class based on velocity
 pub struct VelocityAnalysisSubsystem {
-    #[allow(unused)]
-    config: VelocityAnalysisConfig,
+    _config: VelocityAnalysisConfig,
     correlation_rx: Receiver<CorrelatedIrEvents>,
     analyzed_tx: Sender<AnalyzedIREvents>,
 
@@ -38,7 +37,7 @@ impl VelocityAnalysisSubsystem {
         ];
 
         Self {
-            config,
+            _config: config,
             correlation_rx,
             analyzed_tx,
             event_classes,

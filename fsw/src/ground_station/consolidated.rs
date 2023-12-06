@@ -51,7 +51,7 @@ impl ConsolidatedGroundStation {
         let mut sat_operator_notification = StepChannel::new();
 
         let mut analysis_racks = vec![];
-        for i in 0..3 {
+        for i in 0..config.rack_count {
             let mut cfg = config.base_rack_config.clone();
             cfg.id = i;
             analysis_racks.push(Rack::new(
@@ -192,7 +192,6 @@ pub struct TrackedIREvent {
 
 pub type TrackedEventId = usize;
 
-#[allow(unused)]
 #[derive(Debug, Clone)]
 pub enum OperatorNotification {
     GlobalIRViewStateChange(GlobalIRViewStateChange),
@@ -272,7 +271,6 @@ impl SatErrorFlagStateChange {
     }
 }
 
-#[allow(unused)]
 #[derive(Debug, Clone)]
 pub enum OperatorAction {
     PrioritizeIrEvent { id: TrackedEventId },

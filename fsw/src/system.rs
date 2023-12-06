@@ -248,7 +248,6 @@ pub struct SatToGroundMessage {
 }
 
 #[derive(Debug, Clone)]
-#[allow(unused)]
 pub enum SatToGroundMessageBody {
     SatelliteTelemetry(Box<SatelliteTelemetry>),
     Detections(Detections),
