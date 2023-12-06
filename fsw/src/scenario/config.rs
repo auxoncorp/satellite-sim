@@ -1,11 +1,12 @@
 use crate::{
-    point_failure,
+    ground_station, point_failure,
     satellite::{comms, compute, imu, power, temperature_sensor, vision, SatCatId, SATELLITE_IDS},
     units::{
         Angle, ElectricCharge, ElectricCurrent, ElectricPotential, PotentialOverCharge,
         Temperature, TemperatureInterval, TemperatureIntervalRate, Time,
     },
 };
+use nav_types::WGS84;
 use serde::Deserialize;
 use std::{collections::HashSet, fs, path::Path};
 
@@ -348,6 +349,40 @@ impl Config {
             fault_config,
         })
     }
+
+    pub(crate) fn relay_ground_station_configs(
+        &self,
+    ) -> Vec<ground_station::RelayGroundStationConfig> {
+        self.relay_ground_stations
+            .iter()
+            .cloned()
+            .map(|cfg| ground_station::RelayGroundStationConfig {
+                id: cfg.id,
+                name: cfg.name,
+                position: WGS84::from_degrees_and_meters(cfg.latitude, cfg.longitude, 0.0).into(),
+                fault_config: cfg
+                    .fault
+                    .map(|f| ground_station::RelayGroundStationFaultConfig {
+                        rtc_drift: f
+                            .rtc_drift
+                            .as_ref()
+                            .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                            .unwrap_or(false),
+                        satellite_to_cgs_delay: f
+                            .satellite_to_cgs_delay
+                            .as_ref()
+                            .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                            .unwrap_or(false),
+                        cgs_to_satellite_delay: f
+                            .cgs_to_satellite_delay
+                            .as_ref()
+                            .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                            .unwrap_or(false),
+                    })
+                    .unwrap_or_default(),
+            })
+            .collect()
+    }
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize)]
@@ -679,8 +714,15 @@ pub struct RelayGroundStation {
     pub id: u32,
     pub latitude: f64,
     pub longitude: f64,
-    pub enable_time_sync: bool,
-    pub rtc_drift: f64,
+    pub fault: Option<RelayGroundStationFault>,
+}
+
+#[derive(Clone, PartialEq, PartialOrd, Debug, Default, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct RelayGroundStationFault {
+    pub rtc_drift: Option<String>,
+    pub satellite_to_cgs_delay: Option<String>,
+    pub cgs_to_satellite_delay: Option<String>,
 }
 
 #[derive(Clone, PartialEq, PartialOrd, Debug, Deserialize)]
@@ -808,8 +850,10 @@ mod tests {
         name = 'RGS'
         latitude = 0.23
         longitude = 0.44
-        enable-time-sync = true
-        rtc-drift = 0.02
+            [relay-ground-station.fault]
+            rtc-drift = 'm0'
+            satellite-to-cgs-delay = 'm0'
+            cgs-to-satellite-delay = 'm0'
 
         [[ir-event]]
         ground-truth-id = 1

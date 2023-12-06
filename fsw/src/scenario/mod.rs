@@ -10,7 +10,7 @@ use crate::{
     ground_station::{GroundStationId, RelayGroundStationConfig},
     satellite::{SatelliteConfig, SATELLITE_IDS},
     system::{CameraSourceId, IREvent},
-    units::{Angle, Length, LuminousIntensity, Ratio, Time, Velocity},
+    units::{Angle, Length, LuminousIntensity, Time, Velocity},
 };
 
 pub mod config;
@@ -50,6 +50,12 @@ impl Scenario {
                 sat.vision_config.fault_config.watchdog_out_of_sync = true;
 
                 sat.imu_config.fault_config.watchdog_out_of_sync = true;
+            }
+
+            for rgs in cfg.ground_stations.values_mut() {
+                rgs.fault_config.rtc_drift = true;
+                rgs.fault_config.satellite_to_cgs_delay = true;
+                rgs.fault_config.cgs_to_satellite_delay = true;
             }
         }
 
@@ -99,30 +105,11 @@ impl Scenario {
                 }
             }
 
-            let ground_stations = if cfg.relay_ground_stations.is_empty() {
+            let relays = cfg.relay_ground_station_configs();
+            let ground_stations = if relays.is_empty() {
                 all_known_ground_stations()
             } else {
-                cfg.relay_ground_stations
-                    .into_iter()
-                    .map(|rgs| {
-                        let id = rgs.id;
-                        (
-                            id,
-                            RelayGroundStationConfig {
-                                id,
-                                name: rgs.name,
-                                position: WGS84::from_degrees_and_meters(
-                                    rgs.latitude,
-                                    rgs.longitude,
-                                    0.0, // MSL
-                                )
-                                .into(),
-                                enable_time_sync: rgs.enable_time_sync,
-                                rtc_drift: Ratio::from_f64(rgs.rtc_drift),
-                            },
-                        )
-                    })
-                    .collect()
+                relays.into_iter().map(|rgs| (rgs.id, rgs)).collect()
             };
 
             let ir_events = if cfg.ir_events.is_empty() {
