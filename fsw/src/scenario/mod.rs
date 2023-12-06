@@ -23,8 +23,44 @@ pub struct Scenario {
     pub satellite_configs: HashMap<SpacecraftIndex, SatelliteConfig>,
 }
 
+#[derive(Debug, Copy, Clone, Default)]
+pub struct ScenarioOptions {
+    pub enable_all_mutators: bool,
+}
+
 impl Scenario {
+    pub fn load_with_options<P: AsRef<Path>>(opts: ScenarioOptions, config: Option<P>) -> Self {
+        let mut cfg = Self::load_inner(config);
+
+        if opts.enable_all_mutators {
+            for sat in cfg.satellite_configs.values_mut() {
+                sat.power_config.fault_config.solar_panel_degraded = true;
+                sat.power_config.fault_config.watchdog_out_of_sync = true;
+
+                sat.compute_config.fault_config.watchdog_out_of_sync = true;
+
+                sat.comms_config.fault_config.gps_offline_rtc_drift = true;
+                sat.comms_config.fault_config.gps_offline = true;
+                sat.comms_config.fault_config.ground_transceiver_failure = true;
+                sat.comms_config
+                    .fault_config
+                    .ground_transceiver_partial_failure = true;
+                sat.comms_config.fault_config.watchdog_out_of_sync = true;
+
+                sat.vision_config.fault_config.watchdog_out_of_sync = true;
+
+                sat.imu_config.fault_config.watchdog_out_of_sync = true;
+            }
+        }
+
+        cfg
+    }
+
     pub fn load<P: AsRef<Path>>(config: Option<P>) -> Self {
+        Self::load_inner(config)
+    }
+
+    fn load_inner<P: AsRef<Path>>(config: Option<P>) -> Self {
         // Start with the default satellite configs
         let mut satellite_configs: HashMap<SpacecraftIndex, SatelliteConfig> = (0..SATELLITE_IDS
             .len())
