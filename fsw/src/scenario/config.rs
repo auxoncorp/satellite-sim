@@ -2,7 +2,7 @@ use crate::{
     point_failure,
     satellite::{comms, compute, imu, power, temperature_sensor, vision, SatCatId, SATELLITE_IDS},
     units::{
-        Angle, ElectricCharge, ElectricCurrent, ElectricPotential, PotentialOverCharge, Ratio,
+        Angle, ElectricCharge, ElectricCurrent, ElectricPotential, PotentialOverCharge,
         Temperature, TemperatureInterval, TemperatureIntervalRate, Time,
     },
 };
@@ -210,29 +210,26 @@ impl Config {
             .as_ref()
             .map(|f| comms::CommsFaultConfig {
                 rng_seed: f.rng_seed.unwrap_or(0),
-                gps_offline_rtc_drift: f.gps_offline_rtc_drift.as_ref().map(|f| {
-                    (
-                        self.point_failure(&f.name).map(|fc| fc.into()).unwrap(),
-                        Ratio::from_f64(f.value),
-                    )
-                }),
+                gps_offline_rtc_drift: f
+                    .gps_offline_rtc_drift
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
                 gps_offline: f
                     .gps_offline
                     .as_ref()
-                    .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
                 ground_transceiver_failure: f
                     .ground_transceiver_failure
                     .as_ref()
-                    .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
                 ground_transceiver_partial_failure: f
                     .ground_transceiver_partial_failure
                     .as_ref()
-                    .map(|f| {
-                        (
-                            self.point_failure(&f.name).map(|fc| fc.into()).unwrap(),
-                            Ratio::from_f64(f.value),
-                        )
-                    }),
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
                 rtc_degraded: f
                     .rtc_degraded
                     .as_ref()
@@ -442,8 +439,8 @@ pub struct CommsFault {
     pub rtc_degraded: Option<String>,
     pub watchdog_out_of_sync: Option<String>,
     pub ground_transceiver_failure: Option<String>,
-    pub gps_offline_rtc_drift: Option<PointFailureActivatedValue>,
-    pub ground_transceiver_partial_failure: Option<PointFailureActivatedValue>,
+    pub gps_offline_rtc_drift: Option<String>,
+    pub ground_transceiver_partial_failure: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize)]
@@ -765,16 +762,12 @@ mod tests {
         temperature-sensor = 'ts0'
             [comms-subsystem.fault]
             rng-seed = 11
-            gps-offline = 'pf1'
+            gps-offline = 'm0'
             rtc-degraded = 'pf1'
             watchdog-out-of-sync = 'm0'
-            ground-transceiver-failure = 'pf0'
-                [comms-subsystem.fault.ground-transceiver-partial-failure]
-                name = 'pf1'
-                value = 2.1
-                [comms-subsystem.fault.gps-offline-rtc-drift]
-                name = 'pf0'
-                value = 1.1
+            ground-transceiver-failure = 'm0'
+            gps-offline-rtc-drift = 'm0'
+            ground-transceiver-partial-failure = 'm0'
 
         [[vision-subsystem]]
         name = 'vision0'

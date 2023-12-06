@@ -1,4 +1,5 @@
-use modality_api::TimelineId;
+use modality_api::{AttrType, TimelineId};
+use modality_mutator_protocol::descriptor::owned::*;
 use nav_types::{NVector, WGS84};
 use oorandom::Rand32;
 use serde::Serialize;
@@ -8,8 +9,11 @@ use crate::{
     channel::{Receiver, Sender, TracedMessage},
     ground_station::Relayed,
     modality::{kv, AttrsBuilder, MODALITY},
-    mutator::{watchdog_out_of_sync_descriptor, GenericBooleanMutator},
-    point_failure::{PointFailure, PointFailureConfig, PointFailureThresholdOperator},
+    mutator::{
+        watchdog_out_of_sync_descriptor, GenericBooleanMutator, GenericSetFloatMutator,
+        MutatorActuatorDescriptor,
+    },
+    point_failure::{PointFailure, PointFailureConfig},
     satellite::temperature_sensor::{
         TemperatureSensor, TemperatureSensorConfig, TemperatureSensorModel,
     },
@@ -35,10 +39,10 @@ pub struct CommsSubsystem {
     last_known_gps_nvec: NVector<f64>,
     error_register: CommsErrorRegister,
 
-    gps_offline_rtc_drift: Option<(PointFailure<Time>, Ratio)>,
-    gps_offline: Option<PointFailure<Time>>,
-    ground_transceiver_failure: Option<PointFailure<Time>>,
-    ground_transceiver_partial_failure: Option<(PointFailure<Time>, Ratio)>,
+    gps_offline_rtc_drift: Option<GenericSetFloatMutator>,
+    gps_offline: Option<GenericBooleanMutator>,
+    ground_transceiver_failure: Option<GenericBooleanMutator>,
+    ground_transceiver_partial_failure: Option<GenericSetFloatMutator>,
     rtc_degraded: Option<PointFailure<Temperature>>,
     watchdog_out_of_sync: Option<GenericBooleanMutator>,
 }
@@ -55,57 +59,11 @@ impl CommsSubsystem {
     ) -> Self {
         let timeline = TimelineId::allocate();
         let temp_sensor = TemperatureSensor::new(config.temperature_sensor_config);
-        let gps_offline_rtc_drift = config
-            .fault_config
-            .gps_offline_rtc_drift
-            .as_ref()
-            .map(|(pf_config, val)| (PointFailure::new(pf_config.clone()), *val));
-        let gps_offline = config
-            .fault_config
-            .gps_offline
-            .as_ref()
-            .map(|pf_config| PointFailure::new(pf_config.clone()));
-        let ground_transceiver_failure = config
-            .fault_config
-            .ground_transceiver_failure
-            .as_ref()
-            .map(|pf_config| PointFailure::new(pf_config.clone()));
-        let ground_transceiver_partial_failure = config
-            .fault_config
-            .ground_transceiver_partial_failure
-            .as_ref()
-            .map(|(pf_config, val)| (PointFailure::new(pf_config.clone()), *val));
         let rtc_degraded = config
             .fault_config
             .rtc_degraded
             .as_ref()
             .map(|pf_config| PointFailure::new(pf_config.clone()));
-
-        if let (Some(partial_failure), Some(complete_failure)) = (
-            ground_transceiver_partial_failure
-                .as_ref()
-                .map(|(pf, _)| pf.config()),
-            ground_transceiver_failure.as_ref().map(|pf| pf.config()),
-        ) {
-            let err_msg = "ground_transceiver_partial_failure must happen before ground_transceiver_failure if both are enabled";
-            let pf_t = if let PointFailureThresholdOperator::GreaterThanEqual(t) =
-                partial_failure.threshold
-            {
-                t
-            } else {
-                panic!("{err_msg}");
-            };
-            let cf_t = if let PointFailureThresholdOperator::GreaterThanEqual(t) =
-                complete_failure.threshold
-            {
-                t
-            } else {
-                panic!("{err_msg}");
-            };
-            if pf_t >= cf_t {
-                panic!("{err_msg}");
-            }
-        }
 
         if rtc_degraded.is_some() {
             if let TemperatureSensorModel::Linear(_) = config.temperature_sensor_config.model {
@@ -129,13 +87,13 @@ impl CommsSubsystem {
             // Gets re-initialized in init
             last_known_gps_nvec: NVector::new(Default::default(), 0.0),
             error_register: CommsErrorRegister { out_of_sync: false },
-            gps_offline_rtc_drift,
-            gps_offline,
-            ground_transceiver_failure,
-            ground_transceiver_partial_failure,
             rtc_degraded,
             // Mutators are initialized in init_fault_models at sim-init time
+            ground_transceiver_partial_failure: None,
             watchdog_out_of_sync: None,
+            gps_offline: None,
+            ground_transceiver_failure: None,
+            gps_offline_rtc_drift: None,
         }
     }
 
@@ -145,22 +103,6 @@ impl CommsSubsystem {
             ("component_name", Self::COMPONENT_NAME),
         ];
 
-        if let Some((pf, _)) = self.gps_offline_rtc_drift.as_mut() {
-            pf.set_context(base_ctx);
-            pf.add_context("name", "gps_offline_rtc_drift");
-        }
-        if let Some(pf) = self.gps_offline.as_mut() {
-            pf.set_context(base_ctx);
-            pf.add_context("name", "gps_offline");
-        }
-        if let Some(pf) = self.ground_transceiver_failure.as_mut() {
-            pf.set_context(base_ctx);
-            pf.add_context("name", "ground_transceiver_failure");
-        }
-        if let Some((pf, _)) = self.ground_transceiver_partial_failure.as_mut() {
-            pf.set_context(base_ctx);
-            pf.add_context("name", "ground_transceiver_partial_failure");
-        }
         if let Some(pf) = self.rtc_degraded.as_mut() {
             pf.set_context(base_ctx);
             pf.add_context("name", "rtc_degraded");
@@ -180,27 +122,155 @@ impl CommsSubsystem {
         if let Some(m) = &self.watchdog_out_of_sync {
             MODALITY.register_mutator(m);
         }
+
+        self.gps_offline =
+            self.config
+                .fault_config
+                .gps_offline
+                .then_some(GenericBooleanMutator::new(OwnedMutatorDescriptor {
+                    name: format!("{} GPS offline", Self::COMPONENT_NAME).into(),
+                    description: "Disables the GPS".to_owned().into(),
+                    layer: MutatorLayer::Implementational.into(),
+                    group: Self::COMPONENT_NAME.to_owned().into(),
+                    operation: MutatorOperation::Disable.into(),
+                    statefulness: MutatorStatefulness::Permanent.into(),
+                    organization_custom_metadata: OrganizationCustomMetadata::new(
+                        "satellite".to_string(),
+                        [
+                            ("id".to_string(), id.satcat_id.into()),
+                            ("name".to_string(), id.name.into()),
+                            ("component_name".to_string(), Self::COMPONENT_NAME.into()),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    params: Default::default(),
+                }));
+
+        if let Some(m) = &self.gps_offline {
+            MODALITY.register_mutator(m);
+        }
+
+        self.ground_transceiver_failure = self
+            .config
+            .fault_config
+            .ground_transceiver_failure
+            .then_some(GenericBooleanMutator::new(OwnedMutatorDescriptor {
+                name: format!("{} ground transceiver failure", Self::COMPONENT_NAME).into(),
+                description: "Disables the ground transceiver".to_owned().into(),
+                layer: MutatorLayer::Implementational.into(),
+                group: Self::COMPONENT_NAME.to_owned().into(),
+                operation: MutatorOperation::Disable.into(),
+                statefulness: MutatorStatefulness::Permanent.into(),
+                organization_custom_metadata: OrganizationCustomMetadata::new(
+                    "satellite".to_string(),
+                    [
+                        ("id".to_string(), id.satcat_id.into()),
+                        ("name".to_string(), id.name.into()),
+                        ("component_name".to_string(), Self::COMPONENT_NAME.into()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                params: Default::default(),
+            }));
+
+        if let Some(m) = &self.ground_transceiver_failure {
+            MODALITY.register_mutator(m);
+        }
+
+        self.gps_offline_rtc_drift =
+            self.config
+                .fault_config
+                .gps_offline_rtc_drift
+                .then_some(GenericSetFloatMutator::new(OwnedMutatorDescriptor {
+                    name: format!("{} GPS offline RTC drift", Self::COMPONENT_NAME).into(),
+                    description: "Sets RTC drift ratio while the GPS is offline"
+                        .to_owned()
+                        .into(),
+                    layer: MutatorLayer::Implementational.into(),
+                    group: Self::COMPONENT_NAME.to_owned().into(),
+                    operation: MutatorOperation::SetToValue.into(),
+                    statefulness: MutatorStatefulness::Transient.into(),
+                    organization_custom_metadata: OrganizationCustomMetadata::new(
+                        "satellite".to_string(),
+                        [
+                            ("id".to_string(), id.satcat_id.into()),
+                            ("name".to_string(), id.name.into()),
+                            ("component_name".to_string(), Self::COMPONENT_NAME.into()),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    params: vec![OwnedMutatorParamDescriptor::new(
+                        AttrType::Float,
+                        "drift_ratio".to_owned(),
+                    )
+                    .unwrap()
+                    .with_description("RTC drift ratio [normalized]")
+                    .with_value_min(0.0)
+                    .with_value_max(1.0)
+                    .with_least_effect_value(0.0)],
+                }));
+
+        if let Some(m) = &self.gps_offline_rtc_drift {
+            MODALITY.register_mutator(m);
+        }
+
+        self.ground_transceiver_partial_failure = self
+            .config
+            .fault_config
+            .ground_transceiver_partial_failure
+            .then_some(GenericSetFloatMutator::new(OwnedMutatorDescriptor {
+                name: format!(
+                    "{} ground transceiver partial failure",
+                    Self::COMPONENT_NAME
+                )
+                .into(),
+                description: "Corrupts ground transceiver messages".to_owned().into(),
+                layer: MutatorLayer::Implementational.into(),
+                group: Self::COMPONENT_NAME.to_owned().into(),
+                operation: MutatorOperation::Corrupt.into(),
+                statefulness: MutatorStatefulness::Permanent.into(),
+                organization_custom_metadata: OrganizationCustomMetadata::new(
+                    "satellite".to_string(),
+                    [
+                        ("id".to_string(), id.satcat_id.into()),
+                        ("name".to_string(), id.name.into()),
+                        ("component_name".to_string(), Self::COMPONENT_NAME.into()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                params: vec![OwnedMutatorParamDescriptor::new(
+                    AttrType::Float,
+                    "corrupt_chance".to_owned(),
+                )
+                .unwrap()
+                .with_description("Message corrupt chance ratio [normalized]")
+                .with_value_min(0.0)
+                .with_value_max(1.0)
+                .with_least_effect_value(0.0)],
+            }));
+
+        if let Some(m) = &self.gps_offline_rtc_drift {
+            MODALITY.register_mutator(m);
+        }
     }
 
-    fn update_fault_models(&mut self, dt: Time, rel_time: Time) {
-        if let Some((pf, drift_ratio)) = self.gps_offline_rtc_drift.as_mut() {
-            let fault_active = pf.update(dt, rel_time);
-            if fault_active {
-                self.enable_time_sync = false;
-                self.gps_offline_rtc_drift_ratio = *drift_ratio;
-            }
-        }
+    fn update_fault_models(&mut self, dt: Time) {
+        // Gets disabled mutators and/or point failures
+        self.enable_time_sync = true;
 
-        if let Some(pf) = self.gps_offline.as_mut() {
-            pf.update(dt, rel_time);
-        }
-
-        if let Some(pf) = self.ground_transceiver_failure.as_mut() {
-            pf.update(dt, rel_time);
-        }
-
-        if let Some((pf, _)) = self.ground_transceiver_partial_failure.as_mut() {
-            pf.update(dt, rel_time);
+        if let Some(active_mutation) = self
+            .gps_offline_rtc_drift
+            .as_ref()
+            .and_then(|m| m.active_mutation())
+        {
+            self.enable_time_sync = false;
+            self.gps_offline_rtc_drift_ratio = Ratio::from_f64(active_mutation);
+        } else {
+            self.gps_offline_rtc_drift_ratio = Ratio::from_f64(0.0);
         }
 
         if let Some(pf) = self.rtc_degraded.as_mut() {
@@ -225,31 +295,21 @@ impl CommsSubsystem {
     fn hard_reset(&mut self, rel_time: Time) {
         warn!(?rel_time, "Comms hard reset");
 
+        self.enable_time_sync = true;
+
         // Clear error register
         self.error_register.out_of_sync = false;
 
         // Reset point failures
-        if let Some((pf, _)) = self.gps_offline_rtc_drift.as_mut() {
-            pf.reset();
-        }
-
-        if let Some(pf) = self.gps_offline.as_mut() {
-            pf.reset();
-        }
-
-        if let Some(pf) = self.ground_transceiver_failure.as_mut() {
-            pf.reset();
-        }
-
-        if let Some((pf, _)) = self.ground_transceiver_partial_failure.as_mut() {
-            pf.reset();
-        }
-
         if let Some(pf) = self.rtc_degraded.as_mut() {
             pf.reset();
         }
 
         if let Some(m) = self.watchdog_out_of_sync.as_mut() {
+            MODALITY.clear_mutation(m);
+        }
+
+        if let Some(m) = self.gps_offline_rtc_drift.as_mut() {
             MODALITY.clear_mutation(m);
         }
 
@@ -359,30 +419,25 @@ pub struct CommsFaultConfig {
     /// Seed for the PRNG.
     pub rng_seed: u32,
 
-    /// Parameters for the GPS offline RTC drift point failure.
+    /// Enable the GPS offline RTC drift mutator.
     /// See sections 1.3.4.7 of the requirements doc.
-    /// This point failure is motivated by relative time.
-    /// It uses the provided drift ratio when active.
     /// Note that multiple point failures can accumulate RTC drift.
-    pub gps_offline_rtc_drift: Option<(PointFailureConfig<Time>, Ratio)>,
+    pub gps_offline_rtc_drift: bool,
 
-    /// Parameters for the GPS offline point failure.
+    /// Enable the GPS offline mutator.
     /// See sections 1.3.4.8 of the requirements doc.
-    /// This point failure is motivated by relative time.
     /// Current GPS position is unknown when this point failure
     /// is active.
-    pub gps_offline: Option<PointFailureConfig<Time>>,
+    pub gps_offline: bool,
 
-    /// Parameters for the ground transceiver failure point failure.
+    /// Enable the ground transceiver failure mutator.
     /// See sections 1.3.4.9 of the requirements doc.
-    /// This point failure is motivated by relative time.
-    pub ground_transceiver_failure: Option<PointFailureConfig<Time>>,
+    pub ground_transceiver_failure: bool,
 
-    /// Parameters for the ground transceiver partial failure point failure.
+    /// Enable the ground transceiver partial failure mutator.
     /// See sections 1.3.4.10 of the requirements doc.
-    /// This point failure is motivated by relative time.
     /// It uses the provided corrupted message chance to drop messages.
-    pub ground_transceiver_partial_failure: Option<(PointFailureConfig<Time>, Ratio)>,
+    pub ground_transceiver_partial_failure: bool,
 
     /// Parameters for the RTC degraded point failure.
     /// See sections 1.3.4.11 of the requirements doc.
@@ -419,12 +474,6 @@ impl<'a> SimulationComponent<'a> for CommsSubsystem {
     fn step(&mut self, dt: Time, env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
         self.temp_sensor.step(dt, env, sat);
 
-        MODALITY
-            .process_mutation_plane_messages(std::iter::once(self.watchdog_out_of_sync.as_mut()));
-
-        // NOTE: This may need to move down, once we pull in mutation support, to occur after we tick the clock.
-        self.update_fault_models(dt, env.sim_info.relative_time);
-
         if !self.error_register.out_of_sync {
             let timestamp = Timestamp::from_utc(*env.timestamp);
             if sat.rtc < timestamp && self.enable_time_sync {
@@ -444,6 +493,17 @@ impl<'a> SimulationComponent<'a> for CommsSubsystem {
         // the above code (presently) logs any events.
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
 
+        let mutators = [
+            self.watchdog_out_of_sync.as_mut().map(|m| m.as_dyn()),
+            self.gps_offline.as_mut().map(|m| m.as_dyn()),
+            self.ground_transceiver_failure.as_mut().map(|m| m.as_dyn()),
+            self.gps_offline_rtc_drift.as_mut().map(|m| m.as_dyn()),
+        ];
+
+        MODALITY.process_mutation_plane_messages(mutators.into_iter());
+
+        self.update_fault_models(dt);
+
         let gps = env.fsw_data.gps.get(&0).unwrap();
         let wgs84 =
             WGS84::from_radians_and_meters(gps.wgs_latitude, gps.wgs_longitude, gps.wgs_altitude);
@@ -452,17 +512,18 @@ impl<'a> SimulationComponent<'a> for CommsSubsystem {
         let gps_offline = self
             .gps_offline
             .as_ref()
-            .map(|pf| pf.is_active())
+            .map(|m| m.is_active())
             .unwrap_or(false);
         let ground_trx_offline = self
             .ground_transceiver_failure
             .as_ref()
-            .map(|pf| pf.is_active())
+            .map(|m| m.is_active())
             .unwrap_or(false);
         let (ground_trx_partially_offline, corrupt_chance) = self
             .ground_transceiver_partial_failure
             .as_ref()
-            .map(|(pf, v)| (pf.is_active(), *v))
+            .and_then(|m| m.active_mutation())
+            .map(|am| (true, Ratio::from_f64(am)))
             .unwrap_or((false, Ratio::from_f64(0.0)));
 
         if !gps_offline {
