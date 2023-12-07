@@ -33,11 +33,11 @@ modality-mutation-plane = "0.2"
 modality-mutation-plane-client = "0.2"
 tokio = { version = "1", features = ["rt"] }
 chrono = { version = "0.4", default-features = false }
-ordered-float = "3.7.0"
+ordered-float = "4.2.0"
 rand = "0.8.5"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-toml = "0.7"
+toml = "0.8"
 oorandom = "11.1"
 url = { version = "2.1", features = ["serde"] }
 
