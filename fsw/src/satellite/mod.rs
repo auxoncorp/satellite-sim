@@ -12,6 +12,7 @@ pub use power::{PowerConfig, PowerFaultConfig, PowerStatus};
 pub use temperature_sensor::{
     TemperatureSensorConfig, TemperatureSensorExponential, TemperatureSensorExponentialModelParams,
     TemperatureSensorLinearModelParams, TemperatureSensorModel,
+    TemperatureSensorRandomIntervalModelParams,
 };
 pub use vision::{VisionConfig, VisionFaultConfig, VisionStatus};
 

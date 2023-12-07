@@ -25,7 +25,9 @@ pub enum TemperatureSensorModel {
     /// Temperature is fixed at a constant value
     Constant(Temperature),
 
-    /// Temperature randomly increases or decreases within the interval over time
+    /// Temperature randomly increases or decreases within the interval over time.
+    /// Note the interval is biased towards positive changes in the daytime
+    /// and negative changes when eclipsed.
     RandomInterval(TemperatureSensorRandomIntervalModelParams),
 
     /// Temperature increases or decreases linearly over time
@@ -34,6 +36,8 @@ pub enum TemperatureSensorModel {
     ///Temperature increases or decreases exponentially over time
     Exponential(TemperatureSensorExponentialModelParams),
 }
+
+const RAND_INTERVAL_DAY_NIGHT_BIAS: f64 = 0.2;
 
 pub type TemperatureSensorRandomIntervalModelParams =
     TemperatureSensorModelParams<TemperatureInterval>;
@@ -183,7 +187,10 @@ impl TemperatureSensor {
             }
             RandomInterval(params) => {
                 let interval = params.interval(sun_visible).as_degrees_celsius().abs();
-                let scale = (self.prng.rand_float() * 2.0) - 1.0; // [-1.0, 1.0)
+                let mut scale = (self.prng.rand_float() * 2.0) - 1.0; // [-1.0, 1.0)
+                if (sun_visible && scale < 0.0) || (!sun_visible && scale > 0.0) {
+                    scale *= RAND_INTERVAL_DAY_NIGHT_BIAS;
+                }
                 let dtemp = TemperatureInterval::from_degrees_celsius(interval * scale);
                 let temp = self.temperature + dtemp;
                 self.temperature = temp.clamp(params.min, params.max);

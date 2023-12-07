@@ -4,13 +4,13 @@ use types42::prelude::SpacecraftIndex;
 use crate::{
     satellite::{
         CommsConfig, ComputeConfig, ImuConfig, PowerConfig, SatelliteConfig,
-        TemperatureSensorConfig, TemperatureSensorExponential,
-        TemperatureSensorExponentialModelParams, TemperatureSensorLinearModelParams,
-        TemperatureSensorModel, VisionConfig, SATELLITE_IDS,
+        TemperatureSensorConfig, TemperatureSensorExponential, TemperatureSensorLinearModelParams,
+        TemperatureSensorModel, TemperatureSensorRandomIntervalModelParams, VisionConfig,
+        SATELLITE_IDS,
     },
     units::{
         Angle, ElectricCharge, ElectricCurrent, ElectricPotential, Temperature,
-        TemperatureIntervalRate, Time,
+        TemperatureInterval, TemperatureIntervalRate, Time,
     },
 };
 
@@ -38,13 +38,15 @@ pub fn satellite_config(spacecraft_index: SpacecraftIndex) -> SatelliteConfig {
                 ElectricCurrent::from_milliamps(600.0)
             },
             temperature_sensor_config: TemperatureSensorConfig {
-                model: TemperatureSensorModel::Linear(TemperatureSensorLinearModelParams {
-                    initial: Temperature::from_degrees_celsius(prng.rand_float() * 5.0),
-                    min: Temperature::from_degrees_celsius(-100.0),
-                    max: Temperature::from_degrees_celsius(100.0),
-                    day: TemperatureIntervalRate::from_degrees_celsius_per_second(0.0005),
-                    night: TemperatureIntervalRate::from_degrees_celsius_per_second(-0.0005),
-                }),
+                model: TemperatureSensorModel::RandomInterval(
+                    TemperatureSensorRandomIntervalModelParams {
+                        initial: Temperature::from_degrees_celsius(prng.rand_float() * 5.0),
+                        min: Temperature::from_degrees_celsius(-100.0),
+                        max: Temperature::from_degrees_celsius(100.0),
+                        day: TemperatureInterval::from_degrees_celsius(1.0),
+                        night: TemperatureInterval::from_degrees_celsius(1.0),
+                    },
+                ),
             },
             fault_config: Default::default(),
         },
@@ -52,25 +54,29 @@ pub fn satellite_config(spacecraft_index: SpacecraftIndex) -> SatelliteConfig {
             telemetry_rate: Time::from_secs(1.0),
             collect_timeout: Time::from_millis(500.0),
             temperature_sensor_config: TemperatureSensorConfig {
-                model: TemperatureSensorModel::Linear(TemperatureSensorLinearModelParams {
-                    initial: Temperature::from_degrees_celsius(prng.rand_float() * 5.0),
-                    min: Temperature::from_degrees_celsius(-100.0),
-                    max: Temperature::from_degrees_celsius(100.0),
-                    day: TemperatureIntervalRate::from_degrees_celsius_per_second(0.0001),
-                    night: TemperatureIntervalRate::from_degrees_celsius_per_second(-0.0001),
-                }),
+                model: TemperatureSensorModel::RandomInterval(
+                    TemperatureSensorRandomIntervalModelParams {
+                        initial: Temperature::from_degrees_celsius(prng.rand_float() * 5.0),
+                        min: Temperature::from_degrees_celsius(-100.0),
+                        max: Temperature::from_degrees_celsius(100.0),
+                        day: TemperatureInterval::from_degrees_celsius(1.0),
+                        night: TemperatureInterval::from_degrees_celsius(1.0),
+                    },
+                ),
             },
             fault_config: Default::default(),
         },
         comms_config: CommsConfig {
             temperature_sensor_config: TemperatureSensorConfig {
-                model: TemperatureSensorModel::Linear(TemperatureSensorLinearModelParams {
-                    initial: Temperature::from_degrees_celsius(prng.rand_float() * 5.0),
-                    min: Temperature::from_degrees_celsius(-100.0),
-                    max: Temperature::from_degrees_celsius(100.0),
-                    day: TemperatureIntervalRate::from_degrees_celsius_per_second(0.0001),
-                    night: TemperatureIntervalRate::from_degrees_celsius_per_second(-0.0001),
-                }),
+                model: TemperatureSensorModel::RandomInterval(
+                    TemperatureSensorRandomIntervalModelParams {
+                        initial: Temperature::from_degrees_celsius(prng.rand_float() * 5.0),
+                        min: Temperature::from_degrees_celsius(-100.0),
+                        max: Temperature::from_degrees_celsius(100.0),
+                        day: TemperatureInterval::from_degrees_celsius(1.0),
+                        night: TemperatureInterval::from_degrees_celsius(1.0),
+                    },
+                ),
             },
             fault_config: Default::default(),
         },
@@ -83,50 +89,24 @@ pub fn satellite_config(spacecraft_index: SpacecraftIndex) -> SatelliteConfig {
             focus_field_of_view_angle: Angle::from_degrees(2.0),
             update_interval: Time::from_secs(1.0),
             scanner_camera_temperature_sensor_config: TemperatureSensorConfig {
-                model: TemperatureSensorModel::Exponential(
-                    // https://www.desmos.com/calculator/4xqzocrefv
-                    TemperatureSensorExponentialModelParams {
+                model: TemperatureSensorModel::RandomInterval(
+                    TemperatureSensorRandomIntervalModelParams {
                         initial: Temperature::from_degrees_celsius(prng.rand_float() * 5.0),
                         min: Temperature::from_degrees_celsius(-100.0),
                         max: Temperature::from_degrees_celsius(100.0),
-                        // y\ =0.1e^{\left(0.0001x\right)}+0
-                        day: TemperatureSensorExponential {
-                            base: std::f64::consts::E,
-                            vertical_scaling_factor: 0.1,
-                            horizontal_scaling_factor: 0.0001,
-                            offset: 0.0,
-                        },
-                        // y\ =-0.1e^{\left(0.0001x\right)}+0
-                        night: TemperatureSensorExponential {
-                            base: std::f64::consts::E,
-                            vertical_scaling_factor: -0.1,
-                            horizontal_scaling_factor: 0.0001,
-                            offset: 0.0,
-                        },
+                        day: TemperatureInterval::from_degrees_celsius(1.0),
+                        night: TemperatureInterval::from_degrees_celsius(1.0),
                     },
                 ),
             },
             focus_camera_temperature_sensor_config: TemperatureSensorConfig {
-                model: TemperatureSensorModel::Exponential(
-                    // https://www.desmos.com/calculator/4xqzocrefv
-                    TemperatureSensorExponentialModelParams {
+                model: TemperatureSensorModel::RandomInterval(
+                    TemperatureSensorRandomIntervalModelParams {
                         initial: Temperature::from_degrees_celsius(prng.rand_float() * 5.0),
                         min: Temperature::from_degrees_celsius(-100.0),
                         max: Temperature::from_degrees_celsius(100.0),
-                        // y\ =0.1e^{\left(0.0001x\right)}+0
-                        day: TemperatureSensorExponential {
-                            base: std::f64::consts::E,
-                            vertical_scaling_factor: 0.1,
-                            horizontal_scaling_factor: 0.0001,
-                            offset: 0.0,
-                        },
-                        // y\ =-0.1e^{\left(0.0001x\right)}+0
-                        night: TemperatureSensorExponential {
-                            base: std::f64::consts::E,
-                            vertical_scaling_factor: -0.1,
-                            horizontal_scaling_factor: 0.0001,
-                            offset: 0.0,
-                        },
+                        day: TemperatureInterval::from_degrees_celsius(1.0),
+                        night: TemperatureInterval::from_degrees_celsius(1.0),
                     },
                 ),
             },
@@ -135,13 +115,15 @@ pub fn satellite_config(spacecraft_index: SpacecraftIndex) -> SatelliteConfig {
         },
         imu_config: ImuConfig {
             temperature_sensor_config: TemperatureSensorConfig {
-                model: TemperatureSensorModel::Linear(TemperatureSensorLinearModelParams {
-                    initial: Temperature::from_degrees_celsius(prng.rand_float() * 5.0),
-                    min: Temperature::from_degrees_celsius(-100.0),
-                    max: Temperature::from_degrees_celsius(100.0),
-                    day: TemperatureIntervalRate::from_degrees_celsius_per_second(0.0005),
-                    night: TemperatureIntervalRate::from_degrees_celsius_per_second(-0.0005),
-                }),
+                model: TemperatureSensorModel::RandomInterval(
+                    TemperatureSensorRandomIntervalModelParams {
+                        initial: Temperature::from_degrees_celsius(prng.rand_float() * 5.0),
+                        min: Temperature::from_degrees_celsius(-100.0),
+                        max: Temperature::from_degrees_celsius(100.0),
+                        day: TemperatureInterval::from_degrees_celsius(1.0),
+                        night: TemperatureInterval::from_degrees_celsius(1.0),
+                    },
+                ),
             },
             fault_config: Default::default(),
         },
