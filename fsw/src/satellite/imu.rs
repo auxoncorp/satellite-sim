@@ -6,7 +6,10 @@ use tracing::warn;
 use crate::{
     channel::{Receiver, Sender, TracedMessage},
     modality::{kv, AttrsBuilder, MODALITY},
-    mutator::{watchdog_out_of_sync_descriptor, GenericBooleanMutator},
+    mutator::{
+        constant_temperature_descriptor, watchdog_out_of_sync_descriptor, GenericBooleanMutator,
+        GenericSetFloatMutator, MutatorActuatorDescriptor,
+    },
     point_failure::{PointFailure, PointFailureConfig},
     satellite::temperature_sensor::{TemperatureSensor, TemperatureSensorConfig},
     satellite::{SatelliteEnvironment, SatelliteId, SatelliteSharedState},
@@ -29,6 +32,7 @@ pub struct ImuSubsystem {
     degraded_state: Option<PointFailure<Temperature>>,
     data_inconsistency: Option<PointFailure<Temperature>>,
     watchdog_out_of_sync: Option<GenericBooleanMutator>,
+    constant_temperature: Option<GenericSetFloatMutator>,
 
     timeline: TimelineId,
 
@@ -59,15 +63,12 @@ pub struct ImuFaultConfig {
     /// See sections 1.3.4.16 of the requirements doc.
     pub data_inconsistency: Option<PointFailureConfig<Temperature>>,
 
-    /// Switch the temperature sensor model to constant after
-    /// a `ImuCommand::Reset` is received, or a hard reset occurs.
-    /// This can be used to prevent the temperature-motivated
-    /// point failures from recurring.
-    pub constant_temperature_after_reset: Option<Temperature>,
-
     /// Enable the data watchdog execution out-of-sync mutator.
     /// See sections 1.3.4.2 of the requirements doc.
     pub watchdog_out_of_sync: bool,
+
+    /// Enable the constant temperature mutator.
+    pub constant_temperature: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -236,12 +237,13 @@ impl ImuSubsystem {
             },
             degraded_state,
             data_inconsistency,
-            // Mutators are initialized in init_fault_models at sim-init time
-            watchdog_out_of_sync: None,
             timeline: TimelineId::allocate(),
             sample_tx,
             cmd_rx,
             res_tx,
+            // Mutators are initialized in init_fault_models at sim-init time
+            watchdog_out_of_sync: None,
+            constant_temperature: None,
         }
     }
 
@@ -274,6 +276,18 @@ impl ImuSubsystem {
         if let Some(m) = &self.watchdog_out_of_sync {
             MODALITY.register_mutator(m);
         }
+
+        self.constant_temperature =
+            self.config
+                .fault_config
+                .constant_temperature
+                .then_some(GenericSetFloatMutator::new(
+                    constant_temperature_descriptor(Self::COMPONENT_NAME, id),
+                ));
+
+        if let Some(m) = &self.constant_temperature {
+            MODALITY.register_mutator(m);
+        }
     }
 
     fn update_fault_models(&mut self, dt: Time) {
@@ -296,6 +310,16 @@ impl ImuSubsystem {
             .as_ref()
             .map(|m| m.is_active())
             .unwrap_or(false);
+
+        if let Some(m) = self.constant_temperature.as_mut() {
+            if let Some(active_mutation) = m.active_mutation() {
+                if !m.was_applied {
+                    m.was_applied = true;
+                    let temp = Temperature::from_degrees_celsius(active_mutation);
+                    self.temp_sensor.convert_to_constant_model(temp);
+                }
+            }
+        }
     }
 
     fn soft_reset(&mut self, rel_time: Time) {
@@ -306,16 +330,9 @@ impl ImuSubsystem {
             pf.reset();
         }
 
-        if let Some(constant_temperature_after_reset) =
-            self.config.fault_config.constant_temperature_after_reset
-        {
-            // Use a constant temperature model
-            self.temp_sensor
-                .convert_to_constant_model(constant_temperature_after_reset);
-        } else {
-            // Otherwise reset to initial temperature in the original model
-            self.temp_sensor.reset();
-        }
+        // Reset to initial temperature in the original model
+        self.temp_sensor = TemperatureSensor::new(self.config.temperature_sensor_config);
+        self.temp_sensor.reset();
 
         // Clear the degraded state point failure
         self.error_register.degraded = false;
@@ -339,18 +356,13 @@ impl ImuSubsystem {
 
         if let Some(m) = self.watchdog_out_of_sync.as_mut() {
             MODALITY.clear_mutation(m);
+
+            // Re-initial temperature sensor to original model
+            self.temp_sensor = TemperatureSensor::new(self.config.temperature_sensor_config);
         }
 
-        if let Some(constant_temperature_after_reset) =
-            self.config.fault_config.constant_temperature_after_reset
-        {
-            // Use a constant temperature model
-            self.temp_sensor
-                .convert_to_constant_model(constant_temperature_after_reset);
-        } else {
-            // Otherwise reset to initial temperature in the original model
-            self.temp_sensor.reset();
-        }
+        // Reset to initial temperature in the original model
+        self.temp_sensor.reset();
 
         // Drop message buffers
         self.sample_tx.clear();
@@ -380,8 +392,11 @@ impl<'a> SimulationComponent<'a> for ImuSubsystem {
     fn step(&mut self, dt: Time, env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
 
-        MODALITY
-            .process_mutation_plane_messages(std::iter::once(self.watchdog_out_of_sync.as_mut()));
+        let mutators = [
+            self.watchdog_out_of_sync.as_mut().map(|m| m.as_dyn()),
+            self.constant_temperature.as_mut().map(|m| m.as_dyn()),
+        ];
+        MODALITY.process_mutation_plane_messages(mutators.into_iter());
 
         self.temp_sensor.step(dt, env, sat);
 

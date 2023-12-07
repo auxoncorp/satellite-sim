@@ -1,4 +1,5 @@
 use crate::{satellite::SatelliteId, units::Time};
+use modality_api::AttrType;
 use modality_mutator_protocol::descriptor::owned::*;
 use std::collections::HashMap;
 
@@ -7,12 +8,10 @@ pub fn watchdog_out_of_sync_descriptor(
     id: &SatelliteId,
 ) -> OwnedMutatorDescriptor {
     OwnedMutatorDescriptor {
-        name: format!("{} watchdog execution out-of-sync", component_name).into(),
-        description: format!(
-            "Sets the {} watchdog execution out-of-sync error register bit",
-            component_name
-        )
-        .into(),
+        name: "Watchdog execution out-of-sync error".to_owned().into(),
+        description: "Sets the watchdog execution out-of-sync error register bit"
+            .to_owned()
+            .into(),
         layer: MutatorLayer::Implementational.into(),
         group: component_name.to_owned().into(),
         operation: MutatorOperation::Enable.into(),
@@ -26,6 +25,38 @@ pub fn watchdog_out_of_sync_descriptor(
             ]),
         ),
         params: Default::default(),
+    }
+}
+
+pub fn constant_temperature_descriptor(
+    component_name: &str,
+    id: &SatelliteId,
+) -> OwnedMutatorDescriptor {
+    OwnedMutatorDescriptor {
+        name: "Set temperature".to_owned().into(),
+        description: "Set the temperature sensor reading to a contant value"
+            .to_owned()
+            .into(),
+        layer: MutatorLayer::Implementational.into(),
+        group: component_name.to_owned().into(),
+        operation: MutatorOperation::SetToValue.into(),
+        statefulness: MutatorStatefulness::Transient.into(),
+        organization_custom_metadata: OrganizationCustomMetadata::new(
+            "satellite".to_string(),
+            HashMap::from([
+                ("id".to_string(), id.satcat_id.into()),
+                ("name".to_string(), id.name.into()),
+                ("component_name".to_string(), component_name.into()),
+            ]),
+        ),
+        params: vec![
+            OwnedMutatorParamDescriptor::new(AttrType::Float, "temperature".to_owned())
+                .unwrap()
+                .with_description("Constant temperature [degrees Celsius]")
+                .with_value_min(-500.0)
+                .with_value_max(500.0),
+            // NOTE: could surface theses in config
+        ],
     }
 }
 

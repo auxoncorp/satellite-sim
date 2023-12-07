@@ -42,6 +42,7 @@ impl Scenario {
             for sat in cfg.satellite_configs.values_mut() {
                 sat.power_config.fault_config.solar_panel_degraded = true;
                 sat.power_config.fault_config.watchdog_out_of_sync = true;
+                sat.power_config.fault_config.constant_temperature = true;
 
                 sat.compute_config.fault_config.watchdog_out_of_sync = true;
 
@@ -56,6 +57,7 @@ impl Scenario {
                 sat.vision_config.fault_config.watchdog_out_of_sync = true;
 
                 sat.imu_config.fault_config.watchdog_out_of_sync = true;
+                sat.imu_config.fault_config.constant_temperature = true;
             }
 
             for rgs in cfg.ground_stations.values_mut() {

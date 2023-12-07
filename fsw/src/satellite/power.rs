@@ -7,8 +7,8 @@ use crate::{
     channel::{Receiver, Sender, TracedMessage},
     modality::{kv, AttrsBuilder, MODALITY},
     mutator::{
-        watchdog_out_of_sync_descriptor, GenericBooleanMutator, GenericSetFloatMutator,
-        MutatorActuatorDescriptor,
+        constant_temperature_descriptor, watchdog_out_of_sync_descriptor, GenericBooleanMutator,
+        GenericSetFloatMutator, MutatorActuatorDescriptor,
     },
     point_failure::{PointFailure, PointFailureConfig},
     satellite::temperature_sensor::{TemperatureSensor, TemperatureSensorConfig},
@@ -37,6 +37,7 @@ pub struct PowerSubsystem {
     solar_panel_degraded: Option<GenericSetFloatMutator>,
     battery_degraded: Option<(PointFailure<Temperature>, PotentialOverCharge)>,
     watchdog_out_of_sync: Option<GenericBooleanMutator>,
+    constant_temperature: Option<GenericSetFloatMutator>,
 }
 
 impl std::fmt::Debug for PowerSubsystem {
@@ -87,6 +88,7 @@ impl PowerSubsystem {
             // Mutators are initialized in init_fault_models at sim-init time
             solar_panel_degraded: None,
             watchdog_out_of_sync: None,
+            constant_temperature: None,
         }
     }
 
@@ -172,6 +174,18 @@ impl PowerSubsystem {
         if let Some(m) = &self.watchdog_out_of_sync {
             MODALITY.register_mutator(m);
         }
+
+        self.constant_temperature =
+            self.config
+                .fault_config
+                .constant_temperature
+                .then_some(GenericSetFloatMutator::new(
+                    constant_temperature_descriptor(Self::COMPONENT_NAME, id),
+                ));
+
+        if let Some(m) = &self.constant_temperature {
+            MODALITY.register_mutator(m);
+        }
     }
 
     fn update_fault_models(&mut self, dt: Time) {
@@ -184,6 +198,16 @@ impl PowerSubsystem {
             .as_ref()
             .map(|m| m.is_active())
             .unwrap_or(false);
+
+        if let Some(m) = self.constant_temperature.as_mut() {
+            if let Some(active_mutation) = m.active_mutation() {
+                if !m.was_applied {
+                    m.was_applied = true;
+                    let temp = Temperature::from_degrees_celsius(active_mutation);
+                    self.temp_sensor.convert_to_constant_model(temp);
+                }
+            }
+        }
     }
 
     fn hard_reset(&mut self, rel_time: Time) {
@@ -199,6 +223,13 @@ impl PowerSubsystem {
 
         if let Some(m) = self.watchdog_out_of_sync.as_mut() {
             MODALITY.clear_mutation(m);
+        }
+
+        if let Some(m) = self.watchdog_out_of_sync.as_mut() {
+            MODALITY.clear_mutation(m);
+
+            // Re-initial temperature sensor to original model
+            self.temp_sensor = TemperatureSensor::new(self.config.temperature_sensor_config);
         }
 
         // Reset to initial temperature
@@ -244,6 +275,9 @@ pub struct PowerFaultConfig {
     /// Enable the data watchdog execution out-of-sync mutator.
     /// See sections 1.3.4.2 of the requirements doc.
     pub watchdog_out_of_sync: bool,
+
+    /// Enable the constant temperature mutator.
+    pub constant_temperature: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -337,6 +371,7 @@ impl<'a> SimulationComponent<'a> for PowerSubsystem {
         let mutators = [
             self.watchdog_out_of_sync.as_mut().map(|m| m.as_dyn()),
             self.solar_panel_degraded.as_mut().map(|m| m.as_dyn()),
+            self.constant_temperature.as_mut().map(|m| m.as_dyn()),
         ];
         MODALITY.process_mutation_plane_messages(mutators.into_iter());
 

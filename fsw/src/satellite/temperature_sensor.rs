@@ -131,6 +131,10 @@ impl TemperatureSensor {
         }
     }
 
+    pub fn model(&self) -> &TemperatureSensorModel {
+        &self.config.model
+    }
+
     pub fn temperature(&self) -> Temperature {
         self.temperature
     }
@@ -215,6 +219,10 @@ impl TemperatureSensorModel {
             Linear(params) => params.initial,
             Exponential(params) => params.initial,
         }
+    }
+
+    pub fn is_constant(&self) -> bool {
+        matches!(self, TemperatureSensorModel::Constant(_))
     }
 }
 

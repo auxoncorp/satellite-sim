@@ -150,6 +150,11 @@ impl Config {
                     .as_ref()
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
                     .unwrap_or(false),
+                constant_temperature: f
+                    .constant_temperature
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
             })
             .unwrap_or_default();
         Some(power::PowerConfig {
@@ -335,11 +340,13 @@ impl Config {
                     .data_inconsistency
                     .as_ref()
                     .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-                constant_temperature_after_reset: f
-                    .constant_temperature_after_reset
-                    .map(Temperature::from_degrees_celsius),
                 watchdog_out_of_sync: f
                     .watchdog_out_of_sync
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
+                constant_temperature: f
+                    .constant_temperature
                     .as_ref()
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
                     .unwrap_or(false),
@@ -505,6 +512,7 @@ pub struct PowerSubsystem {
 pub struct PowerFault {
     pub watchdog_out_of_sync: Option<String>,
     pub solar_panel_degraded: Option<String>,
+    pub constant_temperature: Option<String>,
     pub battery_degraded: Option<PointFailureActivatedValue>,
 }
 
@@ -583,8 +591,8 @@ pub struct ImuSubsystem {
 pub struct ImuFault {
     pub degraded_state: Option<String>,
     pub data_inconsistency: Option<String>,
-    pub constant_temperature_after_reset: Option<f64>,
     pub watchdog_out_of_sync: Option<String>,
+    pub constant_temperature: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize)]
@@ -876,6 +884,7 @@ mod tests {
             [power-subsystem.fault]
             watchdog-out-of-sync = 'm0'
             solar-panel-degraded = 'm0'
+            constant-temperature = 'm0'
                 [power-subsystem.fault.battery-degraded]
                 name = 'pf0'
                 value = 1.1
@@ -923,7 +932,7 @@ mod tests {
             [imu-subsystem.fault]
             degraded-state = 'pf0'
             data-inconsistency = 'pf1'
-            constant-temperature-after-reset = 33.0
+            constant-temperature = 'm0'
             watchdog-out-of-sync = 'm0'
 
         [[satellite]]

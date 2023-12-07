@@ -63,6 +63,10 @@ pub struct GenericSetFloatMutator {
     mutator_id: MutatorId,
     descriptor: OwnedMutatorDescriptor,
     active_mutation: Option<f64>,
+
+    /// Some convenience state for the user.
+    /// Gets cleared when a reset occurs.
+    pub was_applied: bool,
 }
 
 impl GenericSetFloatMutator {
@@ -75,6 +79,7 @@ impl GenericSetFloatMutator {
             mutator_id: MutatorId::allocate(),
             descriptor,
             active_mutation: None,
+            was_applied: false,
         }
     }
 
@@ -115,5 +120,6 @@ impl MutatorActuator for GenericSetFloatMutator {
 
     fn reset(&mut self) {
         self.active_mutation = None;
+        self.was_applied = false;
     }
 }
