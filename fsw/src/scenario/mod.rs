@@ -15,7 +15,7 @@ use crate::{
     },
     satellite::{SatelliteConfig, SATELLITE_IDS},
     system::{CameraSourceId, IREvent},
-    units::{Angle, Length, LuminousIntensity, Ratio, Time, Velocity},
+    units::{Angle, Length, LuminousIntensity, Time, Velocity},
 };
 
 pub mod config;
@@ -63,6 +63,12 @@ impl Scenario {
                 rgs.fault_config.satellite_to_cgs_delay = true;
                 rgs.fault_config.cgs_to_satellite_delay = true;
             }
+
+            cfg.consolidated_ground_station_config
+                .base_rack_config
+                .time_source_config
+                .fault_config
+                .rtc_drift = true;
         }
 
         cfg
@@ -325,8 +331,7 @@ fn default_consolidated_ground_station_config() -> ConsolidatedGroundStationConf
         base_rack_config: RackConfig {
             id: 0,
             time_source_config: TimeSourceConfig {
-                enable_time_sync: true,
-                rtc_drift: Ratio::from_f64(0.02),
+                fault_config: Default::default(),
             },
             correlation_config: CorrelationConfig {
                 correlation_window: Time::from_secs(3.0),

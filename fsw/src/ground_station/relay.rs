@@ -110,7 +110,7 @@ impl RelayGroundStation {
             .fault_config
             .rtc_drift
             .then_some(GenericSetFloatMutator::new(OwnedMutatorDescriptor {
-                name: "Relay Ground Station RTC drift".to_owned().into(),
+                name: "Relay ground station RTC drift".to_owned().into(),
                 description: "Sets RTC drift ratio".to_owned().into(),
                 layer: MutatorLayer::Implementational.into(),
                 group: "relay_ground_station".to_owned().into(),

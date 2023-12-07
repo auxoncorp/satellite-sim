@@ -3,8 +3,8 @@ use crate::{
     satellite::{comms, compute, imu, power, temperature_sensor, vision, SatCatId, SATELLITE_IDS},
     units::{
         Angle, ElectricCharge, ElectricCurrent, ElectricPotential, Length, LuminousIntensity,
-        PotentialOverCharge, Ratio, Temperature, TemperatureInterval, TemperatureIntervalRate,
-        Time, Velocity,
+        PotentialOverCharge, Temperature, TemperatureInterval, TemperatureIntervalRate, Time,
+        Velocity,
     },
 };
 use nav_types::WGS84;
@@ -395,8 +395,16 @@ impl Config {
                 base_rack_config: ground_station::RackConfig {
                     id: 0,
                     time_source_config: ground_station::TimeSourceConfig {
-                        enable_time_sync: true,
-                        rtc_drift: Ratio::from_f64(0.0),
+                        fault_config: cfg
+                            .fault
+                            .map(|f| ground_station::TimeSourceFaultConfig {
+                                rtc_drift: f
+                                    .rtc_drift
+                                    .as_ref()
+                                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                                    .unwrap_or(false),
+                            })
+                            .unwrap_or_default(),
                     },
                     correlation_config: ground_station::CorrelationConfig {
                         correlation_window: Time::from_secs(cfg.correlation_window),

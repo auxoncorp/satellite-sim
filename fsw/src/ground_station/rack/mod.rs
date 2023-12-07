@@ -16,7 +16,7 @@ mod velocity_analysis;
 pub use correlation::CorrelationConfig;
 pub use intensity_analysis::IntensityAnalysisConfig;
 pub use synthesis::SynthesisConfig;
-pub use time_source::TimeSourceConfig;
+pub use time_source::{TimeSourceConfig, TimeSourceFaultConfig};
 pub use velocity_analysis::VelocityAnalysisConfig;
 
 use correlation::CorrelationSubsystem;
