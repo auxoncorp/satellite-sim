@@ -4,13 +4,12 @@ use types42::prelude::SpacecraftIndex;
 use crate::{
     satellite::{
         CommsConfig, ComputeConfig, ImuConfig, PowerConfig, SatelliteConfig,
-        TemperatureSensorConfig, TemperatureSensorExponential, TemperatureSensorLinearModelParams,
-        TemperatureSensorModel, TemperatureSensorRandomIntervalModelParams, VisionConfig,
-        SATELLITE_IDS,
+        TemperatureSensorConfig, TemperatureSensorModel,
+        TemperatureSensorRandomIntervalModelParams, VisionConfig, SATELLITE_IDS,
     },
     units::{
         Angle, ElectricCharge, ElectricCurrent, ElectricPotential, Temperature,
-        TemperatureInterval, TemperatureIntervalRate, Time,
+        TemperatureInterval, Time,
     },
 };
 
