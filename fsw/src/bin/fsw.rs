@@ -12,7 +12,7 @@ use fsw_lib::{
     external_mission_control::send_tle_set,
     gui::{GuiState, RenderContext, SharedGuiState},
     modality::MODALITY,
-    scenario::Scenario,
+    scenario::{Scenario, ScenarioOptions},
     sim_info::SimulationInfo,
     system::{System, SystemEnvironment, SystemSharedState},
     units::Timestamp,
@@ -35,6 +35,12 @@ struct Opts {
     /// The default nominal scenario is used when not provided.
     #[arg(long)]
     scenario: Option<PathBuf>,
+
+    /// Enable all mutators.
+    ///
+    /// Overrides any provided configuration file.
+    #[arg(long)]
+    enable_all_mutators: bool,
 
     /// The optional address:port of the mission control TCP server to connect to
     #[arg(long, requires = "mc")]
@@ -114,7 +120,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut msg_reader = BufReader::new(data_source);
 
-    let mut system = System::new(Scenario::load(opts.scenario), external_mission_control);
+    let scenario = Scenario::load_with_options(
+        ScenarioOptions {
+            enable_all_mutators: opts.enable_all_mutators,
+        },
+        opts.scenario,
+    );
+    let mut system = System::new(scenario, external_mission_control);
     let mut sim_info = SimulationInfo::new();
     let mut last_t: Option<Timestamp> = None;
 

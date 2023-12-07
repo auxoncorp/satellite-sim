@@ -131,6 +131,10 @@ impl TemperatureSensor {
         }
     }
 
+    pub fn model(&self) -> &TemperatureSensorModel {
+        &self.config.model
+    }
+
     pub fn temperature(&self) -> Temperature {
         self.temperature
     }
@@ -142,7 +146,6 @@ impl TemperatureSensor {
 
     /// Returns the temperature normalized in [-1, 1] with the model's min and max.
     /// Returns `None` if the model variant is `TemperatureSensorModel::Constant`.
-    #[allow(dead_code)]
     pub fn normalized_temperature(&self) -> Option<Ratio> {
         use TemperatureSensorModel::*;
         match self.config.model {
@@ -216,6 +219,10 @@ impl TemperatureSensorModel {
             Linear(params) => params.initial,
             Exponential(params) => params.initial,
         }
+    }
+
+    pub fn is_constant(&self) -> bool {
+        matches!(self, TemperatureSensorModel::Constant(_))
     }
 }
 

@@ -7,10 +7,15 @@ use types42::prelude::SpacecraftIndex;
 
 use self::config::Config;
 use crate::{
-    ground_station::{GroundStationId, RelayGroundStationConfig},
+    ground_station::{
+        ConsolidatedGroundStationConfig, CorrelationConfig, GroundStationId, IROperatorConfig,
+        IntensityAnalysisConfig, MissionControlUIConfig, RackConfig, RelayGroundStationConfig,
+        ResultSelectionConfig, SatOperatorConfig, SynthesisConfig, TimeSourceConfig,
+        VelocityAnalysisConfig,
+    },
     satellite::{SatelliteConfig, SATELLITE_IDS},
     system::{CameraSourceId, IREvent},
-    units::{Angle, Length, LuminousIntensity, Ratio, Time, Velocity},
+    units::{Angle, Length, LuminousIntensity, Time, Velocity},
 };
 
 pub mod config;
@@ -18,13 +23,69 @@ pub mod nominal;
 
 #[derive(Debug, Clone)]
 pub struct Scenario {
+    pub consolidated_ground_station_config: ConsolidatedGroundStationConfig,
     pub ground_stations: HashMap<GroundStationId, RelayGroundStationConfig>,
     pub ir_events: Vec<ScheduledIREvent>,
     pub satellite_configs: HashMap<SpacecraftIndex, SatelliteConfig>,
 }
 
+#[derive(Debug, Copy, Clone, Default)]
+pub struct ScenarioOptions {
+    pub enable_all_mutators: bool,
+}
+
 impl Scenario {
+    pub fn load_with_options<P: AsRef<Path>>(opts: ScenarioOptions, config: Option<P>) -> Self {
+        let mut cfg = Self::load_inner(config);
+
+        if opts.enable_all_mutators {
+            for sat in cfg.satellite_configs.values_mut() {
+                sat.power_config.fault_config.solar_panel_degraded = true;
+                sat.power_config.fault_config.watchdog_out_of_sync = true;
+                sat.power_config.fault_config.constant_temperature = true;
+
+                sat.compute_config.fault_config.watchdog_out_of_sync = true;
+
+                sat.comms_config.fault_config.gps_offline_rtc_drift = true;
+                sat.comms_config.fault_config.gps_offline = true;
+                sat.comms_config.fault_config.ground_transceiver_failure = true;
+                sat.comms_config
+                    .fault_config
+                    .ground_transceiver_partial_failure = true;
+                sat.comms_config.fault_config.watchdog_out_of_sync = true;
+
+                sat.vision_config.fault_config.watchdog_out_of_sync = true;
+
+                sat.imu_config.fault_config.watchdog_out_of_sync = true;
+                sat.imu_config.fault_config.constant_temperature = true;
+            }
+
+            for rgs in cfg.ground_stations.values_mut() {
+                rgs.fault_config.rtc_drift = true;
+                rgs.fault_config.satellite_to_cgs_delay = true;
+                rgs.fault_config.cgs_to_satellite_delay = true;
+            }
+
+            cfg.consolidated_ground_station_config
+                .base_rack_config
+                .time_source_config
+                .fault_config
+                .rtc_drift = true;
+            cfg.consolidated_ground_station_config
+                .base_rack_config
+                .synthesis_config
+                .fault_config
+                .rack_offline = true;
+        }
+
+        cfg
+    }
+
     pub fn load<P: AsRef<Path>>(config: Option<P>) -> Self {
+        Self::load_inner(config)
+    }
+
+    fn load_inner<P: AsRef<Path>>(config: Option<P>) -> Self {
         // Start with the default satellite configs
         let mut satellite_configs: HashMap<SpacecraftIndex, SatelliteConfig> = (0..SATELLITE_IDS
             .len())
@@ -63,37 +124,19 @@ impl Scenario {
                 }
             }
 
-            let ground_stations = if cfg.relay_ground_stations.is_empty() {
+            let relays = cfg.relay_ground_station_configs();
+            let ground_stations = if relays.is_empty() {
                 all_known_ground_stations()
             } else {
-                cfg.relay_ground_stations
-                    .into_iter()
-                    .map(|rgs| {
-                        let id = rgs.id;
-                        (
-                            id,
-                            RelayGroundStationConfig {
-                                id,
-                                name: rgs.name,
-                                position: WGS84::from_degrees_and_meters(
-                                    rgs.latitude,
-                                    rgs.longitude,
-                                    0.0, // MSL
-                                )
-                                .into(),
-                                enable_time_sync: rgs.enable_time_sync,
-                                rtc_drift: Ratio::from_f64(rgs.rtc_drift),
-                            },
-                        )
-                    })
-                    .collect()
+                relays.into_iter().map(|rgs| (rgs.id, rgs)).collect()
             };
 
             let ir_events = if cfg.ir_events.is_empty() {
                 basic_scheduled_ir_events()
             } else {
                 cfg.ir_events
-                    .into_iter()
+                    .iter()
+                    .cloned()
                     .map(|ire| {
                         ScheduledIREvent::from_degrees_and_meters(
                             Time::from_secs(ire.activate_at),
@@ -110,7 +153,12 @@ impl Scenario {
                     .collect()
             };
 
+            let consolidated_ground_station_config = cfg
+                .consolidated_ground_station_config()
+                .unwrap_or_else(default_consolidated_ground_station_config);
+
             Self {
+                consolidated_ground_station_config,
                 ground_stations,
                 ir_events,
                 satellite_configs,
@@ -118,6 +166,7 @@ impl Scenario {
         } else {
             info!("Loading default nominal scenario");
             Self {
+                consolidated_ground_station_config: default_consolidated_ground_station_config(),
                 ground_stations: all_known_ground_stations(),
                 ir_events: basic_scheduled_ir_events(),
                 satellite_configs,
@@ -281,4 +330,38 @@ pub fn all_known_ground_stations() -> HashMap<GroundStationId, RelayGroundStatio
     .into_iter()
     .map(|gs| (gs.id, gs))
     .collect()
+}
+
+fn default_consolidated_ground_station_config() -> ConsolidatedGroundStationConfig {
+    ConsolidatedGroundStationConfig {
+        rack_count: 3,
+        base_rack_config: RackConfig {
+            id: 0,
+            time_source_config: TimeSourceConfig {
+                fault_config: Default::default(),
+            },
+            correlation_config: CorrelationConfig {
+                correlation_window: Time::from_secs(3.0),
+                prune_window: Time::from_secs(10.0),
+            },
+            velocity_analysis_config: VelocityAnalysisConfig {},
+            intensity_analysis_config: IntensityAnalysisConfig {},
+            synthesis_config: SynthesisConfig {
+                observation_timeout: Time::from_secs(10.0),
+                collapse_instensity_threshold: LuminousIntensity::from_candelas(0.02), // TODO ?????
+                collapse_velocity_threshold: Velocity::from_meters_per_second(0.1),    // TODO ?????
+                collapse_position_threshold: Length::from_meters(100.0),               // TODO ?????
+                report_interval: Time::from_secs(5.0),
+                fault_config: Default::default(),
+            },
+        },
+        result_selection_config: ResultSelectionConfig {
+            selection_rx_window: Time::from_secs(2.0),
+        },
+        mcui_config: MissionControlUIConfig {},
+        ir_operator_config: IROperatorConfig {},
+        sat_operator_config: SatOperatorConfig {
+            clear_flags_after: Time::from_secs(60.0),
+        },
+    }
 }

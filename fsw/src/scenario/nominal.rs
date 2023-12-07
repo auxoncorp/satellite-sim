@@ -46,7 +46,7 @@ pub fn satellite_config(spacecraft_index: SpacecraftIndex) -> SatelliteConfig {
                     night: TemperatureIntervalRate::from_degrees_celsius_per_second(-0.0005),
                 }),
             },
-            fault_config: None,
+            fault_config: Default::default(),
         },
         compute_config: ComputeConfig {
             telemetry_rate: Time::from_secs(1.0),
@@ -60,7 +60,7 @@ pub fn satellite_config(spacecraft_index: SpacecraftIndex) -> SatelliteConfig {
                     night: TemperatureIntervalRate::from_degrees_celsius_per_second(-0.0001),
                 }),
             },
-            fault_config: None,
+            fault_config: Default::default(),
         },
         comms_config: CommsConfig {
             temperature_sensor_config: TemperatureSensorConfig {
@@ -72,7 +72,7 @@ pub fn satellite_config(spacecraft_index: SpacecraftIndex) -> SatelliteConfig {
                     night: TemperatureIntervalRate::from_degrees_celsius_per_second(-0.0001),
                 }),
             },
-            fault_config: None,
+            fault_config: Default::default(),
         },
         vision_config: VisionConfig {
             scanner_field_of_view_angle: if id.is_goes() {
@@ -131,7 +131,7 @@ pub fn satellite_config(spacecraft_index: SpacecraftIndex) -> SatelliteConfig {
                 ),
             },
             focus_camera_disabled: id.is_goes(),
-            fault_config: None,
+            fault_config: Default::default(),
         },
         imu_config: ImuConfig {
             temperature_sensor_config: TemperatureSensorConfig {
@@ -143,7 +143,7 @@ pub fn satellite_config(spacecraft_index: SpacecraftIndex) -> SatelliteConfig {
                     night: TemperatureIntervalRate::from_degrees_celsius_per_second(-0.0005),
                 }),
             },
-            fault_config: None,
+            fault_config: Default::default(),
         },
     }
 }

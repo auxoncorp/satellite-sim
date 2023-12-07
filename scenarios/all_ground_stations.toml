@@ -2,6 +2,18 @@ name = 'A scenario with all of the default ground stations and randomly generate
 
 # Satellites will use the default configuration
 
+[consolidated-ground-station]
+rack-count = 3
+correlation-window = 3.0
+prune-window = 10.0
+observation-timeout = 10.0
+collapse-instensity-threshold = 0.02
+collapse-velocity-threshold = 0.1
+collapse-position-threshold = 100.0
+report-interval = 5.0
+selection-rx-window = 2.0
+clear-flags-after = 60.0
+
 [[relay-ground-station]]
 id = 1
 name = 'GSFC'

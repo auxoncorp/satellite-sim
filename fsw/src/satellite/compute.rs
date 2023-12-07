@@ -5,7 +5,7 @@ use tracing::warn;
 use crate::{
     channel::{Receiver, Sender},
     modality::{AttrsBuilder, MODALITY},
-    point_failure::{PointFailure, PointFailureConfig},
+    mutator::{watchdog_out_of_sync_descriptor, GenericBooleanMutator},
     satellite::{SatelliteEnvironment, SatelliteId, SatelliteSharedState},
     system::{
         Detections, GroundToSatMessage, SatErrorFlag, SatToGroundMessage, SatToGroundMessageBody,
@@ -32,7 +32,7 @@ pub struct ComputeSubsystem {
     error_register: ComputeErrorRegister,
 
     temp_sensor: TemperatureSensor,
-    watchdog_out_of_sync: Option<PointFailure<Time>>,
+    watchdog_out_of_sync: Option<GenericBooleanMutator>,
 
     timeline: TimelineId,
 }
@@ -42,16 +42,16 @@ pub struct ComputeConfig {
     pub telemetry_rate: Time,
     pub collect_timeout: Time,
     pub temperature_sensor_config: TemperatureSensorConfig,
-    pub fault_config: Option<ComputeFaultConfig>,
+    pub fault_config: ComputeFaultConfig,
 }
 
 /// Parameters for the compute point failures.
 /// See the requirements doc, section 1.3.4.2.
 #[derive(Debug, Clone, Default)]
 pub struct ComputeFaultConfig {
-    /// Parameters for the data watchdog execution out-of-sync point failure.
+    /// Enable the data watchdog execution out-of-sync mutator.
     /// See sections 1.3.4.2 of the requirements doc.
-    pub watchdog_out_of_sync: Option<PointFailureConfig<Time>>,
+    pub watchdog_out_of_sync: bool,
 }
 
 pub struct ComputeChannels {
@@ -106,11 +106,6 @@ impl ComputeSubsystem {
     pub fn new(config: ComputeConfig, channels: ComputeChannels) -> Self {
         let timeline = TimelineId::allocate();
         let temp_sensor = TemperatureSensor::new(config.temperature_sensor_config);
-        let watchdog_out_of_sync = config
-            .fault_config
-            .as_ref()
-            .and_then(|c| c.watchdog_out_of_sync.as_ref())
-            .map(|pf_config| PointFailure::new(pf_config.clone()));
         Self {
             config,
             channels,
@@ -123,29 +118,36 @@ impl ComputeSubsystem {
             error_register: ComputeErrorRegister { out_of_sync: false },
 
             temp_sensor,
-            watchdog_out_of_sync,
+            // Mutators are initialized in init_fault_models at sim-init time
+            watchdog_out_of_sync: None,
 
             timeline,
         }
     }
 
     fn init_fault_models(&mut self, id: &SatelliteId) {
-        let base_ctx = [
-            ("satellite_name", id.name),
-            ("component_name", Self::COMPONENT_NAME),
-        ];
+        // Construct mutators at sim-init time so we have access to SatelliteId/env details
+        // to qualify the mutator descriptors
+        self.watchdog_out_of_sync =
+            self.config
+                .fault_config
+                .watchdog_out_of_sync
+                .then_some(GenericBooleanMutator::new(watchdog_out_of_sync_descriptor(
+                    Self::COMPONENT_NAME,
+                    id,
+                )));
 
-        if let Some(pf) = self.watchdog_out_of_sync.as_mut() {
-            pf.set_context(base_ctx);
-            pf.add_context("name", "watchdog_out_of_sync");
+        if let Some(m) = &self.watchdog_out_of_sync {
+            MODALITY.register_mutator(m);
         }
     }
 
-    fn update_fault_models(&mut self, dt: Time, rel_time: Time) {
-        if let Some(pf) = self.watchdog_out_of_sync.as_mut() {
-            let fault_active = pf.update(dt, rel_time);
-            self.error_register.out_of_sync = fault_active;
-        }
+    fn update_fault_models(&mut self) {
+        self.error_register.out_of_sync = self
+            .watchdog_out_of_sync
+            .as_ref()
+            .map(|m| m.is_active())
+            .unwrap_or(false);
     }
 
     fn hard_reset(&mut self, rel_time: Time, shared_state: &mut SatelliteSharedState) {
@@ -160,10 +162,8 @@ impl ComputeSubsystem {
             collect_time: shared_state.rtc + self.config.telemetry_rate,
         };
 
-        // Reset point failures
-        if let Some(pf) = self.watchdog_out_of_sync.as_mut() {
-            // One-shot, disable further activations
-            pf.set_disabled(true);
+        if let Some(m) = self.watchdog_out_of_sync.as_mut() {
+            MODALITY.clear_mutation(m);
         }
 
         // Drop message buffers
@@ -207,9 +207,12 @@ impl<'a> SimulationComponent<'a> for ComputeSubsystem {
     fn step(&mut self, dt: Time, env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
 
+        MODALITY
+            .process_mutation_plane_messages(std::iter::once(self.watchdog_out_of_sync.as_mut()));
+
         self.temp_sensor.step(dt, env, sat);
 
-        self.update_fault_models(dt, env.sim_info.relative_time);
+        self.update_fault_models();
 
         let mut power_res = self.channels.power_res_rx.recv();
         let mut comms_res = self.channels.comms_res_rx.recv();

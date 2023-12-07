@@ -19,12 +19,17 @@ name = 'imu-data-inconsistency'
 threshold = '>= 40.0'
 hold-period = 2.0
 
+[[mutator]]
+name = 'imu-wdt-exec-out-of-sync'
+enabled = true
+
 [[imu-subsystem]]
 name = 'imu'
 temperature-sensor = 'imu-temp-sensor'
     [imu-subsystem.fault]
     degraded-state = 'imu-degraded-state'
     data-inconsistency = 'imu-data-inconsistency'
+    watchdog-out-of-sync = 'imu-wdt-exec-out-of-sync'
 
 # GALAXY-1 will use the provided configuration
 # while the other satellites will use the default configuration.

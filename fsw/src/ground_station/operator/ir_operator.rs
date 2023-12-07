@@ -44,6 +44,7 @@ impl IROperator {
     }
 }
 
+#[derive(Debug, Clone, Default)]
 pub struct IROperatorConfig {}
 
 impl<'a> SimulationComponent<'a> for IROperator {

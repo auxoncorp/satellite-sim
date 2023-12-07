@@ -15,8 +15,8 @@ mod velocity_analysis;
 
 pub use correlation::CorrelationConfig;
 pub use intensity_analysis::IntensityAnalysisConfig;
-pub use synthesis::SynthesisConfig;
-pub use time_source::TimeSourceConfig;
+pub use synthesis::{SynthesisConfig, SynthesisFaultConfig};
+pub use time_source::{TimeSourceConfig, TimeSourceFaultConfig};
 pub use velocity_analysis::VelocityAnalysisConfig;
 
 use correlation::CorrelationSubsystem;
@@ -45,7 +45,7 @@ pub struct Rack {
 
 pub type RackId = usize;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct RackConfig {
     pub id: RackId,
     pub time_source_config: TimeSourceConfig,

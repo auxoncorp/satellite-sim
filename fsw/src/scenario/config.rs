@@ -1,11 +1,13 @@
 use crate::{
-    point_failure,
+    ground_station, point_failure,
     satellite::{comms, compute, imu, power, temperature_sensor, vision, SatCatId, SATELLITE_IDS},
     units::{
-        Angle, ElectricCharge, ElectricCurrent, ElectricPotential, PotentialOverCharge, Ratio,
-        Temperature, TemperatureInterval, TemperatureIntervalRate, Time,
+        Angle, ElectricCharge, ElectricCurrent, ElectricPotential, Length, LuminousIntensity,
+        PotentialOverCharge, Temperature, TemperatureInterval, TemperatureIntervalRate, Time,
+        Velocity,
     },
 };
+use nav_types::WGS84;
 use serde::Deserialize;
 use std::{collections::HashSet, fs, path::Path};
 
@@ -17,6 +19,8 @@ pub struct Config {
     pub temperature_sensors: Vec<TemperatureSensor>,
     #[serde(alias = "point-failure")]
     pub point_failures: Vec<PointFailure>,
+    #[serde(alias = "mutator")]
+    pub mutators: Vec<Mutator>,
     #[serde(alias = "power-subsystem")]
     pub power_subsystems: Vec<PowerSubsystem>,
     #[serde(alias = "compute-subsystem")]
@@ -29,6 +33,7 @@ pub struct Config {
     pub imu_subsystems: Vec<ImuSubsystem>,
     #[serde(alias = "satellite")]
     pub satellites: Vec<Satellite>,
+    pub consolidated_ground_station: Option<ConsolidatedGroundStation>,
     #[serde(alias = "relay-ground-station")]
     pub relay_ground_stations: Vec<RelayGroundStation>,
     #[serde(alias = "ir-event")]
@@ -55,6 +60,13 @@ impl Config {
         for name in cfg.point_failures.iter().map(|t| &t.name) {
             if !names.insert(name) {
                 panic!("Duplicate configuration entry for point failure '{name}'");
+            }
+        }
+
+        names.clear();
+        for name in cfg.mutators.iter().map(|t| &t.name) {
+            if !names.insert(name) {
+                panic!("Duplicate configuration entry for mutator '{name}'");
             }
         }
 
@@ -102,6 +114,10 @@ impl Config {
         self.point_failures.iter().find(|t| t.name == name)
     }
 
+    fn mutator(&self, name: &str) -> Option<&Mutator> {
+        self.mutators.iter().find(|t| t.name == name)
+    }
+
     pub(crate) fn power_config(&self, id: SatCatId) -> Option<power::PowerConfig> {
         let sat = self.satellite(id)?;
         let cfg = sat.power.as_ref().map(|n| {
@@ -114,24 +130,33 @@ impl Config {
             .temperature_sensor(&cfg.temperature_sensor)
             .unwrap()
             .into();
-        let fault_config = cfg.fault.as_ref().map(|f| power::PowerFaultConfig {
-            solar_panel_degraded: f.solar_panel_degraded.as_ref().map(|f| {
-                (
-                    self.point_failure(&f.name).map(|fc| fc.into()).unwrap(),
-                    ElectricCurrent::from_amps(f.value),
-                )
-            }),
-            battery_degraded: f.solar_panel_degraded.as_ref().map(|f| {
-                (
-                    self.point_failure(&f.name).map(|fc| fc.into()).unwrap(),
-                    PotentialOverCharge::from_volts_per_coulomb(f.value),
-                )
-            }),
-            watchdog_out_of_sync: f
-                .watchdog_out_of_sync
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-        });
+        let fault_config = cfg
+            .fault
+            .as_ref()
+            .map(|f| power::PowerFaultConfig {
+                solar_panel_degraded: f
+                    .solar_panel_degraded
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
+                battery_degraded: f.battery_degraded.as_ref().map(|f| {
+                    (
+                        self.point_failure(&f.name).map(|fc| fc.into()).unwrap(),
+                        PotentialOverCharge::from_volts_per_coulomb(f.value),
+                    )
+                }),
+                watchdog_out_of_sync: f
+                    .watchdog_out_of_sync
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
+                constant_temperature: f
+                    .constant_temperature
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
+            })
+            .unwrap_or_default();
         Some(power::PowerConfig {
             battery_max_charge: ElectricCharge::from_amp_hours(cfg.battery_max_charge),
             battery_max_voltage: ElectricPotential::from_volts(cfg.battery_max_voltage),
@@ -157,12 +182,17 @@ impl Config {
             .temperature_sensor(&cfg.temperature_sensor)
             .unwrap()
             .into();
-        let fault_config = cfg.fault.as_ref().map(|f| compute::ComputeFaultConfig {
-            watchdog_out_of_sync: f
-                .watchdog_out_of_sync
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-        });
+        let fault_config = cfg
+            .fault
+            .as_ref()
+            .map(|f| compute::ComputeFaultConfig {
+                watchdog_out_of_sync: f
+                    .watchdog_out_of_sync
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
+            })
+            .unwrap_or_default();
         Some(compute::ComputeConfig {
             telemetry_rate: Time::from_secs(cfg.telemetry_rate),
             collect_timeout: Time::from_secs(cfg.collect_timeout),
@@ -183,39 +213,42 @@ impl Config {
             .temperature_sensor(&cfg.temperature_sensor)
             .unwrap()
             .into();
-        let fault_config = cfg.fault.as_ref().map(|f| comms::CommsFaultConfig {
-            rng_seed: f.rng_seed.unwrap_or(0),
-            gps_offline_rtc_drift: f.gps_offline_rtc_drift.as_ref().map(|f| {
-                (
-                    self.point_failure(&f.name).map(|fc| fc.into()).unwrap(),
-                    Ratio::from_f64(f.value),
-                )
-            }),
-            gps_offline: f
-                .gps_offline
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            ground_transceiver_failure: f
-                .ground_transceiver_failure
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            ground_transceiver_partial_failure: f.ground_transceiver_partial_failure.as_ref().map(
-                |f| {
-                    (
-                        self.point_failure(&f.name).map(|fc| fc.into()).unwrap(),
-                        Ratio::from_f64(f.value),
-                    )
-                },
-            ),
-            rtc_degraded: f
-                .rtc_degraded
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            watchdog_out_of_sync: f
-                .watchdog_out_of_sync
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-        });
+        let fault_config = cfg
+            .fault
+            .as_ref()
+            .map(|f| comms::CommsFaultConfig {
+                rng_seed: f.rng_seed.unwrap_or(0),
+                gps_offline_rtc_drift: f
+                    .gps_offline_rtc_drift
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
+                gps_offline: f
+                    .gps_offline
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
+                ground_transceiver_failure: f
+                    .ground_transceiver_failure
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
+                ground_transceiver_partial_failure: f
+                    .ground_transceiver_partial_failure
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
+                rtc_degraded: f
+                    .rtc_degraded
+                    .as_ref()
+                    .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
+                watchdog_out_of_sync: f
+                    .watchdog_out_of_sync
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
+            })
+            .unwrap_or_default();
         Some(comms::CommsConfig {
             temperature_sensor_config,
             fault_config,
@@ -238,35 +271,39 @@ impl Config {
             .temperature_sensor(&cfg.scanner_camera_temperature_sensor)
             .unwrap()
             .into();
-        let fault_config = cfg.fault.as_ref().map(|f| vision::VisionFaultConfig {
-            active_cooling: f
-                .active_cooling
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            scanner_camera_offline: f
-                .scanner_camera_offline
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            focus_camera_offline: f
-                .focus_camera_offline
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            focus_camera_gimbal: f
-                .focus_camera_gimbal
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            focus_camera_constant_temperature_after_reset: f
-                .focus_camera_constant_temperature_after_reset
-                .map(Temperature::from_degrees_celsius),
-            scanner_camera_constant_temperature_after_reset: f
-                .scanner_camera_constant_temperature_after_reset
-                .map(Temperature::from_degrees_celsius),
-            watchdog_out_of_sync: f
-                .watchdog_out_of_sync
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            watchdog_out_of_sync_recurring: f.watchdog_out_of_sync_recurring,
-        });
+        let fault_config = cfg
+            .fault
+            .as_ref()
+            .map(|f| vision::VisionFaultConfig {
+                active_cooling: f
+                    .active_cooling
+                    .as_ref()
+                    .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
+                scanner_camera_offline: f
+                    .scanner_camera_offline
+                    .as_ref()
+                    .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
+                focus_camera_offline: f
+                    .focus_camera_offline
+                    .as_ref()
+                    .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
+                focus_camera_gimbal: f
+                    .focus_camera_gimbal
+                    .as_ref()
+                    .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
+                focus_camera_constant_temperature_after_reset: f
+                    .focus_camera_constant_temperature_after_reset
+                    .map(Temperature::from_degrees_celsius),
+                scanner_camera_constant_temperature_after_reset: f
+                    .scanner_camera_constant_temperature_after_reset
+                    .map(Temperature::from_degrees_celsius),
+                watchdog_out_of_sync: f
+                    .watchdog_out_of_sync
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
+            })
+            .unwrap_or_default();
 
         Some(vision::VisionConfig {
             scanner_field_of_view_angle: Angle::from_degrees(cfg.scanner_field_of_view),
@@ -291,28 +328,132 @@ impl Config {
             .temperature_sensor(&cfg.temperature_sensor)
             .unwrap()
             .into();
-        let fault_config = cfg.fault.as_ref().map(|f| imu::ImuFaultConfig {
-            degraded_state: f
-                .degraded_state
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            data_inconsistency: f
-                .data_inconsistency
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            constant_temperature_after_reset: f
-                .constant_temperature_after_reset
-                .map(Temperature::from_degrees_celsius),
-            watchdog_out_of_sync: f
-                .watchdog_out_of_sync
-                .as_ref()
-                .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-            watchdog_out_of_sync_recurring: f.watchdog_out_of_sync_recurring,
-        });
+        let fault_config = cfg
+            .fault
+            .as_ref()
+            .map(|f| imu::ImuFaultConfig {
+                degraded_state: f
+                    .degraded_state
+                    .as_ref()
+                    .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
+                data_inconsistency: f
+                    .data_inconsistency
+                    .as_ref()
+                    .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
+                watchdog_out_of_sync: f
+                    .watchdog_out_of_sync
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
+                constant_temperature: f
+                    .constant_temperature
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(false),
+            })
+            .unwrap_or_default();
 
         Some(imu::ImuConfig {
             temperature_sensor_config,
             fault_config,
+        })
+    }
+
+    pub(crate) fn relay_ground_station_configs(
+        &self,
+    ) -> Vec<ground_station::RelayGroundStationConfig> {
+        self.relay_ground_stations
+            .iter()
+            .cloned()
+            .map(|cfg| ground_station::RelayGroundStationConfig {
+                id: cfg.id,
+                name: cfg.name,
+                position: WGS84::from_degrees_and_meters(cfg.latitude, cfg.longitude, 0.0).into(),
+                fault_config: cfg
+                    .fault
+                    .map(|f| ground_station::RelayGroundStationFaultConfig {
+                        rtc_drift: f
+                            .rtc_drift
+                            .as_ref()
+                            .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                            .unwrap_or(false),
+                        satellite_to_cgs_delay: f
+                            .satellite_to_cgs_delay
+                            .as_ref()
+                            .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                            .unwrap_or(false),
+                        cgs_to_satellite_delay: f
+                            .cgs_to_satellite_delay
+                            .as_ref()
+                            .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                            .unwrap_or(false),
+                    })
+                    .unwrap_or_default(),
+            })
+            .collect()
+    }
+
+    pub(crate) fn consolidated_ground_station_config(
+        &self,
+    ) -> Option<ground_station::ConsolidatedGroundStationConfig> {
+        self.consolidated_ground_station.clone().map(|cfg| {
+            ground_station::ConsolidatedGroundStationConfig {
+                rack_count: cfg.rack_count,
+                base_rack_config: ground_station::RackConfig {
+                    id: 0,
+                    time_source_config: ground_station::TimeSourceConfig {
+                        fault_config: cfg
+                            .fault
+                            .as_ref()
+                            .map(|f| ground_station::TimeSourceFaultConfig {
+                                rtc_drift: f
+                                    .rtc_drift
+                                    .as_ref()
+                                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                                    .unwrap_or(false),
+                            })
+                            .unwrap_or_default(),
+                    },
+                    correlation_config: ground_station::CorrelationConfig {
+                        correlation_window: Time::from_secs(cfg.correlation_window),
+                        prune_window: Time::from_secs(cfg.prune_window),
+                    },
+                    velocity_analysis_config: Default::default(),
+                    intensity_analysis_config: Default::default(),
+                    synthesis_config: ground_station::SynthesisConfig {
+                        observation_timeout: Time::from_secs(cfg.observation_timeout),
+                        collapse_instensity_threshold: LuminousIntensity::from_candelas(
+                            cfg.collapse_instensity_threshold,
+                        ),
+                        collapse_velocity_threshold: Velocity::from_meters_per_second(
+                            cfg.collapse_velocity_threshold,
+                        ),
+                        collapse_position_threshold: Length::from_meters(
+                            cfg.collapse_position_threshold,
+                        ),
+                        report_interval: Time::from_secs(cfg.report_interval),
+                        fault_config: cfg
+                            .fault
+                            .as_ref()
+                            .map(|f| ground_station::SynthesisFaultConfig {
+                                rack_offline: f
+                                    .rack_offline
+                                    .as_ref()
+                                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                                    .unwrap_or(false),
+                            })
+                            .unwrap_or_default(),
+                    },
+                },
+                result_selection_config: ground_station::ResultSelectionConfig {
+                    selection_rx_window: Time::from_secs(cfg.selection_rx_window),
+                },
+                mcui_config: Default::default(),
+                ir_operator_config: Default::default(),
+                sat_operator_config: ground_station::SatOperatorConfig {
+                    clear_flags_after: Time::from_secs(cfg.clear_flags_after),
+                },
+            }
         })
     }
 }
@@ -370,7 +511,8 @@ pub struct PowerSubsystem {
 #[serde(default, rename_all = "kebab-case")]
 pub struct PowerFault {
     pub watchdog_out_of_sync: Option<String>,
-    pub solar_panel_degraded: Option<PointFailureActivatedValue>,
+    pub solar_panel_degraded: Option<String>,
+    pub constant_temperature: Option<String>,
     pub battery_degraded: Option<PointFailureActivatedValue>,
 }
 
@@ -406,8 +548,8 @@ pub struct CommsFault {
     pub rtc_degraded: Option<String>,
     pub watchdog_out_of_sync: Option<String>,
     pub ground_transceiver_failure: Option<String>,
-    pub gps_offline_rtc_drift: Option<PointFailureActivatedValue>,
-    pub ground_transceiver_partial_failure: Option<PointFailureActivatedValue>,
+    pub gps_offline_rtc_drift: Option<String>,
+    pub ground_transceiver_partial_failure: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize)]
@@ -449,9 +591,8 @@ pub struct ImuSubsystem {
 pub struct ImuFault {
     pub degraded_state: Option<String>,
     pub data_inconsistency: Option<String>,
-    pub constant_temperature_after_reset: Option<f64>,
     pub watchdog_out_of_sync: Option<String>,
-    pub watchdog_out_of_sync_recurring: Option<bool>,
+    pub constant_temperature: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize)]
@@ -635,13 +776,50 @@ pf_from_impl!(ElectricPotential, from_volts);
 
 #[derive(Clone, PartialEq, PartialOrd, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+pub struct Mutator {
+    pub name: String,
+    pub enabled: bool,
+}
+
+#[derive(Clone, PartialEq, PartialOrd, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ConsolidatedGroundStation {
+    pub rack_count: usize,
+    pub correlation_window: f64,
+    pub prune_window: f64,
+    pub observation_timeout: f64,
+    pub collapse_instensity_threshold: f64,
+    pub collapse_velocity_threshold: f64,
+    pub collapse_position_threshold: f64,
+    pub report_interval: f64,
+    pub selection_rx_window: f64,
+    pub clear_flags_after: f64,
+    pub fault: Option<ConsolidatedGroundStationFault>,
+}
+
+#[derive(Clone, PartialEq, PartialOrd, Debug, Default, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct ConsolidatedGroundStationFault {
+    pub rtc_drift: Option<String>,
+    pub rack_offline: Option<String>,
+}
+
+#[derive(Clone, PartialEq, PartialOrd, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct RelayGroundStation {
     pub name: String,
     pub id: u32,
     pub latitude: f64,
     pub longitude: f64,
-    pub enable_time_sync: bool,
-    pub rtc_drift: f64,
+    pub fault: Option<RelayGroundStationFault>,
+}
+
+#[derive(Clone, PartialEq, PartialOrd, Debug, Default, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct RelayGroundStationFault {
+    pub rtc_drift: Option<String>,
+    pub satellite_to_cgs_delay: Option<String>,
+    pub cgs_to_satellite_delay: Option<String>,
 }
 
 #[derive(Clone, PartialEq, PartialOrd, Debug, Deserialize)]
@@ -691,6 +869,10 @@ mod tests {
         threshold = '>= 10.0'
         hold-period = 20.0
 
+        [[mutator]]
+        name = 'm0'
+        enabled = true
+
         [[power-subsystem]]
         name = 'power0'
         battery-max-charge = 2.2
@@ -700,10 +882,9 @@ mod tests {
         system-load = 5.3
         temperature-sensor = 'ts1'
             [power-subsystem.fault]
-            watchdog-out-of-sync = 'pf0'
-                [power-subsystem.fault.solar-panel-degraded]
-                name = 'pf1'
-                value = 2.1
+            watchdog-out-of-sync = 'm0'
+            solar-panel-degraded = 'm0'
+            constant-temperature = 'm0'
                 [power-subsystem.fault.battery-degraded]
                 name = 'pf0'
                 value = 1.1
@@ -714,23 +895,19 @@ mod tests {
         collect-timeout = 4.8
         temperature-sensor = 'ts1'
             [compute-subsystem.fault]
-            watchdog-out-of-sync = 'pf0'
+            watchdog-out-of-sync = 'm0'
 
         [[comms-subsystem]]
         name = 'comms0'
         temperature-sensor = 'ts0'
             [comms-subsystem.fault]
             rng-seed = 11
-            gps-offline = 'pf1'
+            gps-offline = 'm0'
             rtc-degraded = 'pf1'
-            watchdog-out-of-sync = 'pf0'
-            ground-transceiver-failure = 'pf0'
-                [comms-subsystem.fault.ground-transceiver-partial-failure]
-                name = 'pf1'
-                value = 2.1
-                [comms-subsystem.fault.gps-offline-rtc-drift]
-                name = 'pf0'
-                value = 1.1
+            watchdog-out-of-sync = 'm0'
+            ground-transceiver-failure = 'm0'
+            gps-offline-rtc-drift = 'm0'
+            ground-transceiver-partial-failure = 'm0'
 
         [[vision-subsystem]]
         name = 'vision0'
@@ -747,8 +924,7 @@ mod tests {
             focus-camera-gimbal = 'pf1'
             focus-camera-constant-temperature-after-reset = 22.0
             scanner-camera-constant-temperature-after-reset = 33.0
-            watchdog-out-of-sync = 'pf0'
-            watchdog-out-of-sync-recurring = true
+            watchdog-out-of-sync = 'm0'
 
         [[imu-subsystem]]
         name = 'imu0'
@@ -756,9 +932,8 @@ mod tests {
             [imu-subsystem.fault]
             degraded-state = 'pf0'
             data-inconsistency = 'pf1'
-            constant-temperature-after-reset = 33.0
-            watchdog-out-of-sync = 'pf0'
-            watchdog-out-of-sync-recurring = true
+            constant-temperature = 'm0'
+            watchdog-out-of-sync = 'm0'
 
         [[satellite]]
         id = 'GALAXY-1'
@@ -768,13 +943,30 @@ mod tests {
         vision = 'vision0'
         imu = 'imu0'
 
+        [consolidated-ground-station]
+        rack-count = 3
+        correlation-window = 3.0
+        prune-window = 10.0
+        observation-timeout = 10.0
+        collapse-instensity-threshold = 0.02
+        collapse-velocity-threshold = 0.1
+        collapse-position-threshold = 100.0
+        report-interval = 5.0
+        selection-rx-window = 2.0
+        clear-flags-after = 60.0
+            [consolidated-ground-station.fault]
+            rtc-drift = 'm0'
+            rack-offline = 'm0'
+
         [[relay-ground-station]]
         id = 1
         name = 'RGS'
         latitude = 0.23
         longitude = 0.44
-        enable-time-sync = true
-        rtc-drift = 0.02
+            [relay-ground-station.fault]
+            rtc-drift = 'm0'
+            satellite-to-cgs-delay = 'm0'
+            cgs-to-satellite-delay = 'm0'
 
         [[ir-event]]
         ground-truth-id = 1
@@ -795,6 +987,7 @@ mod tests {
         assert_eq!(cfg.name.as_deref(), Some("my scenario"));
         assert_eq!(cfg.temperature_sensors.len(), 2);
         assert_eq!(cfg.point_failures.len(), 2);
+        assert_eq!(cfg.mutators.len(), 1);
         assert_eq!(cfg.satellites.len(), 1);
         assert_eq!(cfg.power_subsystems.len(), 1);
         assert_eq!(cfg.compute_subsystems.len(), 1);

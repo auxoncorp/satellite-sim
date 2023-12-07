@@ -54,6 +54,7 @@ impl SatOperator {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct SatOperatorConfig {
     /// The operator will eventually clear flags, after waiting this long
     pub clear_flags_after: Time,

@@ -12,9 +12,11 @@ pub use mcui::MissionControlUIConfig;
 pub use operator::{IROperator, IROperatorConfig, SatOperator, SatOperatorConfig};
 pub use rack::{
     CorrelationConfig, IntensityAnalysisConfig, RackConfig, RackId, SynthesisConfig,
-    TimeSourceConfig, VelocityAnalysisConfig,
+    SynthesisFaultConfig, TimeSourceConfig, TimeSourceFaultConfig, VelocityAnalysisConfig,
 };
-pub use relay::{GroundStationId, RelayGroundStation, RelayGroundStationConfig};
+pub use relay::{
+    GroundStationId, RelayGroundStation, RelayGroundStationConfig, RelayGroundStationFaultConfig,
+};
 pub use result_selection::ResultSelectionConfig;
 
 /// A message that has been forwared through a relay

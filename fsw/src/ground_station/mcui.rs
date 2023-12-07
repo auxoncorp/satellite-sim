@@ -65,6 +65,7 @@ pub struct MissionControlUISubsystem {
     relative_rtc: Timestamp,
 }
 
+#[derive(Debug, Clone, Default)]
 pub struct MissionControlUIConfig {}
 
 impl MissionControlUISubsystem {

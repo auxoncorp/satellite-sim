@@ -1,4 +1,4 @@
-use modality_api::{TimelineId, Uuid};
+use modality_api::TimelineId;
 use modality_auth_token::AuthToken;
 use modality_ingest_client::protocol::InternedAttrKey;
 use modality_ingest_client::types::{AttrKey, AttrVal};
@@ -407,17 +407,34 @@ impl ModalityClient {
         })
     }
 
+    // Calls reset on the mutator if a mutation was active
+    pub fn clear_mutation<M: MutatorActuatorDescriptor>(&self, m: &mut M) {
+        Self::INNER.with(|inner| {
+            if let Some(inner) = inner.borrow_mut().as_mut() {
+                let mutator_id = m.mutator_id();
+                if let Some(active_mutation_id) = inner.active_mutations.remove(&mutator_id) {
+                    tracing::debug!(
+                        mutator_id = %mutator_id,
+                        mutation_id = %active_mutation_id,
+                        "Manually clearing mutation");
+
+                    m.reset();
+                }
+            }
+        })
+    }
+
     /// Handle any pending mutation plane messages for the given mutators.
     /// NOTE: it is expected that the logical component's timeline will be active
     /// so that any mutation plane related events end up on the appropriate timeline.
     pub fn process_mutation_plane_messages<'a, M, I>(&self, mutators: I)
     where
-        M: MutatorActuatorDescriptor + 'a,
-        I: Iterator<Item = &'a mut M> + 'a,
+        M: MutatorActuatorDescriptor + ?Sized + 'a,
+        I: Iterator<Item = Option<&'a mut M>> + 'a,
     {
         Self::INNER.with(|inner| {
             if let Some(inner) = inner.borrow_mut().as_mut() {
-                for mutator in mutators {
+                for mutator in mutators.flatten() {
                     let mutator_id = mutator.mutator_id();
                     let mailbox = inner
                         .mutator_messages
@@ -453,6 +470,13 @@ impl ModalityClient {
                                     .into_iter()
                                     .map(|kv| (kv.key.into(), kv.value))
                                     .collect();
+
+                                inner.active_mutations.insert(mutator_id, mutation_id);
+
+                                tracing::debug!(
+                                        mutator_id = %mutator_id,
+                                        mutation_id = %mutation_id,
+                                        "Injecting mutation");
 
                                 mutator.inject(mutation_id, params);
                             }
@@ -556,7 +580,7 @@ impl Inner {
         // NOTE: By this point, we know the ingest connection is working, so rather than returning the
         // result, we panic so it doesn't go undetected since we always expect the mutation
         // plane to be connected along with ingest
-        let mut_plane_pid = ParticipantId::from(Uuid::new_v4());
+        let mut_plane_pid = ParticipantId::allocate();
         let mut_url = mutation_proto_parent_url().expect("Mutation protocol parent URL");
         let auth_token = AuthToken::load().expect("Auth token for mutation client");
         let allow_insecure_tls = true;
@@ -874,7 +898,7 @@ fn mutation_proto_parent_url() -> Result<Url, MutationProtocolUrlError> {
     }
 }
 
-fn mutator_announcement<M: MutatorActuatorDescriptor>(
+fn mutator_announcement<M: MutatorActuatorDescriptor + ?Sized>(
     participant_id: ParticipantId,
     m: &M,
 ) -> RootwardsMessage {

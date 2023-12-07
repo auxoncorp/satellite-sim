@@ -1,10 +1,10 @@
-use std::collections::VecDeque;
-
 use modality_api::TimelineId;
+use modality_mutator_protocol::descriptor::owned::*;
 use na::Vector3;
 use nav_types::NVector;
+use std::collections::VecDeque;
 
-use super::{AnalyzedIREvents, IREventClass, RackSharedState};
+use super::{AnalyzedIREvents, IREventClass, RackId, RackSharedState};
 use crate::{
     channel::{Receiver, Sender},
     ground_station::{
@@ -12,6 +12,7 @@ use crate::{
         OperationalStatus,
     },
     modality::{kv, MODALITY},
+    mutator::GenericBooleanMutator,
     system::{IREvent, SystemEnvironment},
     units::{Length, LuminousIntensity, Time, Timestamp, Velocity},
     SimulationComponent,
@@ -26,9 +27,11 @@ pub struct SynthesisSubsystem {
     next_event_id: TrackedEventId,
     last_report_time: Timestamp,
     timeline: TimelineId,
+
+    rack_offline: Option<GenericBooleanMutator>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SynthesisConfig {
     /// How frequently should the synthesis module send out full reports?
     pub report_interval: Time,
@@ -40,6 +43,14 @@ pub struct SynthesisConfig {
     pub collapse_instensity_threshold: LuminousIntensity,
     pub collapse_velocity_threshold: Velocity,
     pub collapse_position_threshold: Length,
+
+    pub fault_config: SynthesisFaultConfig,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SynthesisFaultConfig {
+    /// Enable the rack offline mutator.
+    pub rack_offline: bool,
 }
 
 impl SynthesisSubsystem {
@@ -56,6 +67,36 @@ impl SynthesisSubsystem {
             next_event_id: 0,
             last_report_time: Timestamp::epoch(),
             timeline: TimelineId::allocate(),
+            // Mutators are initialized in init_fault_models at sim-init time
+            rack_offline: None,
+        }
+    }
+
+    fn init_fault_models(&mut self, id: RackId) {
+        // Construct mutators at sim-init time so we have access to SatelliteId/env details
+        // to qualify the mutator descriptors
+        self.rack_offline =
+            self.config
+                .fault_config
+                .rack_offline
+                .then_some(GenericBooleanMutator::new(OwnedMutatorDescriptor {
+                    name: "Consolidated ground station rack offline".to_owned().into(),
+                    description: "Takes a rack offline".to_owned().into(),
+                    layer: MutatorLayer::Implementational.into(),
+                    group: "consolidated_ground_station".to_owned().into(),
+                    operation: MutatorOperation::Disable.into(),
+                    statefulness: MutatorStatefulness::Transient.into(),
+                    organization_custom_metadata: OrganizationCustomMetadata::new(
+                        "consolidated_ground_station".to_string(),
+                        [("rack.id".to_string(), (id as i64).into())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    params: Default::default(),
+                }));
+
+        if let Some(m) = &self.rack_offline {
+            MODALITY.register_mutator(m);
         }
     }
 }
@@ -218,17 +259,36 @@ impl<'a> SimulationComponent<'a> for SynthesisSubsystem {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, rack.rtc);
         MODALITY.emit_rack_timeline_attrs("synthesis", rack.id);
         MODALITY.quick_event("init");
+        self.init_fault_models(rack.id);
     }
 
     fn reset(&mut self, _env: &'a Self::Environment, rack: &mut Self::SharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, rack.rtc);
         MODALITY.quick_event("reset");
+
+        if let Some(m) = self.rack_offline.as_mut() {
+            MODALITY.clear_mutation(m);
+        }
     }
 
     fn step(&mut self, _dt: Time, _env: &SystemEnvironment<'a>, rack: &mut RackSharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, rack.rtc);
 
+        MODALITY.process_mutation_plane_messages([self.rack_offline.as_mut()].into_iter());
+
+        let rack_offline = self
+            .rack_offline
+            .as_ref()
+            .map(|m| m.is_active())
+            .unwrap_or(false);
+
         while let Some(msg) = self.analyzed_rx.recv() {
+            if rack_offline {
+                // Drop ingress
+                // NOTE: we could ignore and let the channel fill up
+                continue;
+            }
+
             for ev in msg.events.into_iter() {
                 // If this new observation has parameters consistent with an existing tracked event...
                 if let Some(tracked) = self.tracked_events.iter_mut().find(|tracked| {
@@ -254,30 +314,32 @@ impl<'a> SimulationComponent<'a> for SynthesisSubsystem {
             }
         }
 
-        for tracked in self.tracked_events.iter_mut() {
-            tracked.time_out_old_observations(self.config.observation_timeout, rack.rtc);
-        }
-
-        // Remove any events that no longer have any supporting observations
-        self.tracked_events.retain(|tracked| {
-            let should_keep = !tracked.observations.is_empty();
-            if !should_keep {
-                MODALITY.quick_event_attrs(
-                    "expire_tracked_event",
-                    [kv("event.tracked_event_id", tracked.id as i64)],
-                );
+        if !rack_offline {
+            for tracked in self.tracked_events.iter_mut() {
+                tracked.time_out_old_observations(self.config.observation_timeout, rack.rtc);
             }
-            should_keep
-        });
 
-        let next_report_time = self.last_report_time + self.config.report_interval;
-        if next_report_time < rack.rtc {
-            let _ = self.synthesized_tx.try_send(GlobalIRView {
-                rack_id: rack.id,
-                rack_timestamp: rack.rtc,
-                events: self.tracked_events.clone(),
+            // Remove any events that no longer have any supporting observations
+            self.tracked_events.retain(|tracked| {
+                let should_keep = !tracked.observations.is_empty();
+                if !should_keep {
+                    MODALITY.quick_event_attrs(
+                        "expire_tracked_event",
+                        [kv("event.tracked_event_id", tracked.id as i64)],
+                    );
+                }
+                should_keep
             });
-            self.last_report_time = rack.rtc;
+
+            let next_report_time = self.last_report_time + self.config.report_interval;
+            if next_report_time < rack.rtc {
+                let _ = self.synthesized_tx.try_send(GlobalIRView {
+                    rack_id: rack.id,
+                    rack_timestamp: rack.rtc,
+                    events: self.tracked_events.clone(),
+                });
+                self.last_report_time = rack.rtc;
+            }
         }
     }
 }

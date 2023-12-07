@@ -13,8 +13,7 @@ use crate::{
 
 /// Predict IR event class based on intensity
 pub struct IntensityAnalysisSubsystem {
-    #[allow(unused)]
-    config: IntensityAnalysisConfig,
+    _config: IntensityAnalysisConfig,
     correlation_rx: Receiver<CorrelatedIrEvents>,
     analyzed_tx: Sender<AnalyzedIREvents>,
 
@@ -22,7 +21,7 @@ pub struct IntensityAnalysisSubsystem {
     timeline: TimelineId,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct IntensityAnalysisConfig {}
 
 impl IntensityAnalysisSubsystem {
@@ -38,7 +37,7 @@ impl IntensityAnalysisSubsystem {
         ];
 
         Self {
-            config,
+            _config: config,
             correlation_rx,
             analyzed_tx,
             event_classes,

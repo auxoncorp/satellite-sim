@@ -1,6 +1,6 @@
 # satellite-sim
 
-A simulated satellite constellation data generation and testbed system for [Modality](https://docs.auxon.io/modality/).
+A simulated satellite constellation data generation and testbed system for Auxon's [Modality](https://docs.auxon.io/modality/), [Conform](https://docs.auxon.io/conform/), and [Deviant](https://docs.auxon.io/deviant/) products.
 
 Features:
 * Physics and environmental simulation provided by [42](https://github.com/ericstoneking/42)
