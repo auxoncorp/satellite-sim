@@ -9,7 +9,7 @@ Features:
 * Satellites communicate to relay ground stations at fixed locations on the Earth
 * Relay ground stations relay incoming communications to a central ground station
 * IR event fusion and simulated operator happen in the central ground station
-* Fault models built into all the subsystems and components with configurable point failure
+* Fault models built into all the subsystems and components with configurable point failures and mutators
 
 ## Getting Started
 
