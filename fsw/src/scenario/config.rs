@@ -397,6 +397,7 @@ impl Config {
                     time_source_config: ground_station::TimeSourceConfig {
                         fault_config: cfg
                             .fault
+                            .as_ref()
                             .map(|f| ground_station::TimeSourceFaultConfig {
                                 rtc_drift: f
                                     .rtc_drift
@@ -424,6 +425,17 @@ impl Config {
                             cfg.collapse_position_threshold,
                         ),
                         report_interval: Time::from_secs(cfg.report_interval),
+                        fault_config: cfg
+                            .fault
+                            .as_ref()
+                            .map(|f| ground_station::SynthesisFaultConfig {
+                                rack_offline: f
+                                    .rack_offline
+                                    .as_ref()
+                                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                                    .unwrap_or(false),
+                            })
+                            .unwrap_or_default(),
                     },
                 },
                 result_selection_config: ground_station::ResultSelectionConfig {
@@ -781,6 +793,7 @@ pub struct ConsolidatedGroundStation {
 #[serde(default, rename_all = "kebab-case")]
 pub struct ConsolidatedGroundStationFault {
     pub rtc_drift: Option<String>,
+    pub rack_offline: Option<String>,
 }
 
 #[derive(Clone, PartialEq, PartialOrd, Debug, Deserialize)]
@@ -934,6 +947,7 @@ mod tests {
         clear-flags-after = 60.0
             [consolidated-ground-station.fault]
             rtc-drift = 'm0'
+            rack-offline = 'm0'
 
         [[relay-ground-station]]
         id = 1

@@ -69,6 +69,11 @@ impl Scenario {
                 .time_source_config
                 .fault_config
                 .rtc_drift = true;
+            cfg.consolidated_ground_station_config
+                .base_rack_config
+                .synthesis_config
+                .fault_config
+                .rack_offline = true;
         }
 
         cfg
@@ -345,6 +350,7 @@ fn default_consolidated_ground_station_config() -> ConsolidatedGroundStationConf
                 collapse_velocity_threshold: Velocity::from_meters_per_second(0.1),    // TODO ?????
                 collapse_position_threshold: Length::from_meters(100.0),               // TODO ?????
                 report_interval: Time::from_secs(5.0),
+                fault_config: Default::default(),
             },
         },
         result_selection_config: ResultSelectionConfig {

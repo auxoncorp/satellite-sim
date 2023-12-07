@@ -12,7 +12,7 @@ pub use mcui::MissionControlUIConfig;
 pub use operator::{IROperator, IROperatorConfig, SatOperator, SatOperatorConfig};
 pub use rack::{
     CorrelationConfig, IntensityAnalysisConfig, RackConfig, RackId, SynthesisConfig,
-    TimeSourceConfig, TimeSourceFaultConfig, VelocityAnalysisConfig,
+    SynthesisFaultConfig, TimeSourceConfig, TimeSourceFaultConfig, VelocityAnalysisConfig,
 };
 pub use relay::{
     GroundStationId, RelayGroundStation, RelayGroundStationConfig, RelayGroundStationFaultConfig,
