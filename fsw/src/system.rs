@@ -8,12 +8,7 @@ use types42::spacecraft::SpacecraftIndex;
 
 use crate::{
     channel::{Step, StepChannel, TracedMessage},
-    ground_station::{
-        ConsolidatedGroundStation, ConsolidatedGroundStationConfig, CorrelationConfig,
-        IROperatorConfig, IntensityAnalysisConfig, MissionControlUIConfig, RackConfig,
-        RelayGroundStation, Relayed, ResultSelectionConfig, SatOperatorConfig, SynthesisConfig,
-        TimeSourceConfig, VelocityAnalysisConfig,
-    },
+    ground_station::{ConsolidatedGroundStation, RelayGroundStation, Relayed},
     ground_truth_ir_events::{GroundTruthIrEventsManager, GroundTruthIrEventsManagerConfig},
     gui::SharedGuiState,
     modality::{kv, AttrsBuilder},
@@ -23,7 +18,7 @@ use crate::{
     },
     scenario::Scenario,
     sim_info::SimulationInfo,
-    units::{Length, LuminousIntensity, Ratio, Time, Timestamp, Velocity},
+    units::{LuminousIntensity, Time, Timestamp},
     SimulationComponent,
 };
 
@@ -51,7 +46,7 @@ impl System {
         let mut sat_to_relay_ch = StepChannel::new();
 
         let consolidated_ground_station = ConsolidatedGroundStation::new(
-            consolidated_ground_station_config(),
+            scenario.consolidated_ground_station_config.clone(),
             || relay_to_cgs_ch.receiver(None),
             cgs_to_relay_ch.sender(None),
             external_mission_control.as_ref().map(|s| {
@@ -198,40 +193,6 @@ pub struct SystemSharedState {
 impl SystemSharedState {
     pub fn new(gui: Option<SharedGuiState>) -> Result<Self, IngestError> {
         Ok(SystemSharedState { gui })
-    }
-}
-
-fn consolidated_ground_station_config() -> ConsolidatedGroundStationConfig {
-    ConsolidatedGroundStationConfig {
-        rack_count: 3,
-        base_rack_config: RackConfig {
-            id: 0,
-            time_source_config: TimeSourceConfig {
-                enable_time_sync: true,
-                rtc_drift: Ratio::from_f64(0.02),
-            },
-            correlation_config: CorrelationConfig {
-                correlation_window: Time::from_secs(3.0),
-                prune_window: Time::from_secs(10.0),
-            },
-            velocity_analysis_config: VelocityAnalysisConfig {},
-            intensity_analysis_config: IntensityAnalysisConfig {},
-            synthesis_config: SynthesisConfig {
-                observation_timeout: Time::from_secs(10.0),
-                collapse_instensity_threshold: LuminousIntensity::from_candelas(0.02), // TODO ?????
-                collapse_velocity_threshold: Velocity::from_meters_per_second(0.1),    // TODO ?????
-                collapse_position_threshold: Length::from_meters(100.0),               // TODO ?????
-                report_interval: Time::from_secs(5.0),
-            },
-        },
-        result_selection_config: ResultSelectionConfig {
-            selection_rx_window: Time::from_secs(2.0),
-        },
-        mcui_config: MissionControlUIConfig {},
-        ir_operator_config: IROperatorConfig {},
-        sat_operator_config: SatOperatorConfig {
-            clear_flags_after: Time::from_secs(60.0),
-        },
     }
 }
 

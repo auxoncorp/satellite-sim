@@ -21,7 +21,7 @@ pub struct IntensityAnalysisSubsystem {
     timeline: TimelineId,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct IntensityAnalysisConfig {}
 
 impl IntensityAnalysisSubsystem {

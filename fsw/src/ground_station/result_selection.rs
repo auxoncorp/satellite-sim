@@ -37,6 +37,7 @@ pub struct ResultSelectionSubsystem {
     pending_batch: Vec<GlobalIRView>,
 }
 
+#[derive(Debug, Clone)]
 pub struct ResultSelectionConfig {
     /// After receiving data from a rack, wait this long for candidates from the others.
     pub selection_rx_window: Time,

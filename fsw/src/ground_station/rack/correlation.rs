@@ -21,7 +21,7 @@ pub struct CorrelationSubsystem {
     timeline: TimelineId,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct CorrelationConfig {
     pub correlation_window: Time,
     pub prune_window: Time,

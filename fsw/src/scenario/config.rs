@@ -2,8 +2,9 @@ use crate::{
     ground_station, point_failure,
     satellite::{comms, compute, imu, power, temperature_sensor, vision, SatCatId, SATELLITE_IDS},
     units::{
-        Angle, ElectricCharge, ElectricCurrent, ElectricPotential, PotentialOverCharge,
-        Temperature, TemperatureInterval, TemperatureIntervalRate, Time,
+        Angle, ElectricCharge, ElectricCurrent, ElectricPotential, Length, LuminousIntensity,
+        PotentialOverCharge, Ratio, Temperature, TemperatureInterval, TemperatureIntervalRate,
+        Time, Velocity,
     },
 };
 use nav_types::WGS84;
@@ -32,6 +33,7 @@ pub struct Config {
     pub imu_subsystems: Vec<ImuSubsystem>,
     #[serde(alias = "satellite")]
     pub satellites: Vec<Satellite>,
+    pub consolidated_ground_station: Option<ConsolidatedGroundStation>,
     #[serde(alias = "relay-ground-station")]
     pub relay_ground_stations: Vec<RelayGroundStation>,
     #[serde(alias = "ir-event")]
@@ -383,6 +385,50 @@ impl Config {
             })
             .collect()
     }
+
+    pub(crate) fn consolidated_ground_station_config(
+        &self,
+    ) -> Option<ground_station::ConsolidatedGroundStationConfig> {
+        self.consolidated_ground_station.clone().map(|cfg| {
+            ground_station::ConsolidatedGroundStationConfig {
+                rack_count: cfg.rack_count,
+                base_rack_config: ground_station::RackConfig {
+                    id: 0,
+                    time_source_config: ground_station::TimeSourceConfig {
+                        enable_time_sync: true,
+                        rtc_drift: Ratio::from_f64(0.0),
+                    },
+                    correlation_config: ground_station::CorrelationConfig {
+                        correlation_window: Time::from_secs(cfg.correlation_window),
+                        prune_window: Time::from_secs(cfg.prune_window),
+                    },
+                    velocity_analysis_config: Default::default(),
+                    intensity_analysis_config: Default::default(),
+                    synthesis_config: ground_station::SynthesisConfig {
+                        observation_timeout: Time::from_secs(cfg.observation_timeout),
+                        collapse_instensity_threshold: LuminousIntensity::from_candelas(
+                            cfg.collapse_instensity_threshold,
+                        ),
+                        collapse_velocity_threshold: Velocity::from_meters_per_second(
+                            cfg.collapse_velocity_threshold,
+                        ),
+                        collapse_position_threshold: Length::from_meters(
+                            cfg.collapse_position_threshold,
+                        ),
+                        report_interval: Time::from_secs(cfg.report_interval),
+                    },
+                },
+                result_selection_config: ground_station::ResultSelectionConfig {
+                    selection_rx_window: Time::from_secs(cfg.selection_rx_window),
+                },
+                mcui_config: Default::default(),
+                ir_operator_config: Default::default(),
+                sat_operator_config: ground_station::SatOperatorConfig {
+                    clear_flags_after: Time::from_secs(cfg.clear_flags_after),
+                },
+            }
+        })
+    }
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize)]
@@ -709,6 +755,28 @@ pub struct Mutator {
 
 #[derive(Clone, PartialEq, PartialOrd, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+pub struct ConsolidatedGroundStation {
+    pub rack_count: usize,
+    pub correlation_window: f64,
+    pub prune_window: f64,
+    pub observation_timeout: f64,
+    pub collapse_instensity_threshold: f64,
+    pub collapse_velocity_threshold: f64,
+    pub collapse_position_threshold: f64,
+    pub report_interval: f64,
+    pub selection_rx_window: f64,
+    pub clear_flags_after: f64,
+    pub fault: Option<ConsolidatedGroundStationFault>,
+}
+
+#[derive(Clone, PartialEq, PartialOrd, Debug, Default, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct ConsolidatedGroundStationFault {
+    pub rtc_drift: Option<String>,
+}
+
+#[derive(Clone, PartialEq, PartialOrd, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct RelayGroundStation {
     pub name: String,
     pub id: u32,
@@ -844,6 +912,20 @@ mod tests {
         comms = 'comms0'
         vision = 'vision0'
         imu = 'imu0'
+
+        [consolidated-ground-station]
+        rack-count = 3
+        correlation-window = 3.0
+        prune-window = 10.0
+        observation-timeout = 10.0
+        collapse-instensity-threshold = 0.02
+        collapse-velocity-threshold = 0.1
+        collapse-position-threshold = 100.0
+        report-interval = 5.0
+        selection-rx-window = 2.0
+        clear-flags-after = 60.0
+            [consolidated-ground-station.fault]
+            rtc-drift = 'm0'
 
         [[relay-ground-station]]
         id = 1

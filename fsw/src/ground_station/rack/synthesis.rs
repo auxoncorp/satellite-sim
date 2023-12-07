@@ -28,7 +28,7 @@ pub struct SynthesisSubsystem {
     timeline: TimelineId,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SynthesisConfig {
     /// How frequently should the synthesis module send out full reports?
     pub report_interval: Time,

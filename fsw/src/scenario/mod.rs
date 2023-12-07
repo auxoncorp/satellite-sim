@@ -7,10 +7,15 @@ use types42::prelude::SpacecraftIndex;
 
 use self::config::Config;
 use crate::{
-    ground_station::{GroundStationId, RelayGroundStationConfig},
+    ground_station::{
+        ConsolidatedGroundStationConfig, CorrelationConfig, GroundStationId, IROperatorConfig,
+        IntensityAnalysisConfig, MissionControlUIConfig, RackConfig, RelayGroundStationConfig,
+        ResultSelectionConfig, SatOperatorConfig, SynthesisConfig, TimeSourceConfig,
+        VelocityAnalysisConfig,
+    },
     satellite::{SatelliteConfig, SATELLITE_IDS},
     system::{CameraSourceId, IREvent},
-    units::{Angle, Length, LuminousIntensity, Time, Velocity},
+    units::{Angle, Length, LuminousIntensity, Ratio, Time, Velocity},
 };
 
 pub mod config;
@@ -18,6 +23,7 @@ pub mod nominal;
 
 #[derive(Debug, Clone)]
 pub struct Scenario {
+    pub consolidated_ground_station_config: ConsolidatedGroundStationConfig,
     pub ground_stations: HashMap<GroundStationId, RelayGroundStationConfig>,
     pub ir_events: Vec<ScheduledIREvent>,
     pub satellite_configs: HashMap<SpacecraftIndex, SatelliteConfig>,
@@ -116,7 +122,8 @@ impl Scenario {
                 basic_scheduled_ir_events()
             } else {
                 cfg.ir_events
-                    .into_iter()
+                    .iter()
+                    .cloned()
                     .map(|ire| {
                         ScheduledIREvent::from_degrees_and_meters(
                             Time::from_secs(ire.activate_at),
@@ -133,7 +140,12 @@ impl Scenario {
                     .collect()
             };
 
+            let consolidated_ground_station_config = cfg
+                .consolidated_ground_station_config()
+                .unwrap_or_else(default_consolidated_ground_station_config);
+
             Self {
+                consolidated_ground_station_config,
                 ground_stations,
                 ir_events,
                 satellite_configs,
@@ -141,6 +153,7 @@ impl Scenario {
         } else {
             info!("Loading default nominal scenario");
             Self {
+                consolidated_ground_station_config: default_consolidated_ground_station_config(),
                 ground_stations: all_known_ground_stations(),
                 ir_events: basic_scheduled_ir_events(),
                 satellite_configs,
@@ -304,4 +317,38 @@ pub fn all_known_ground_stations() -> HashMap<GroundStationId, RelayGroundStatio
     .into_iter()
     .map(|gs| (gs.id, gs))
     .collect()
+}
+
+fn default_consolidated_ground_station_config() -> ConsolidatedGroundStationConfig {
+    ConsolidatedGroundStationConfig {
+        rack_count: 3,
+        base_rack_config: RackConfig {
+            id: 0,
+            time_source_config: TimeSourceConfig {
+                enable_time_sync: true,
+                rtc_drift: Ratio::from_f64(0.02),
+            },
+            correlation_config: CorrelationConfig {
+                correlation_window: Time::from_secs(3.0),
+                prune_window: Time::from_secs(10.0),
+            },
+            velocity_analysis_config: VelocityAnalysisConfig {},
+            intensity_analysis_config: IntensityAnalysisConfig {},
+            synthesis_config: SynthesisConfig {
+                observation_timeout: Time::from_secs(10.0),
+                collapse_instensity_threshold: LuminousIntensity::from_candelas(0.02), // TODO ?????
+                collapse_velocity_threshold: Velocity::from_meters_per_second(0.1),    // TODO ?????
+                collapse_position_threshold: Length::from_meters(100.0),               // TODO ?????
+                report_interval: Time::from_secs(5.0),
+            },
+        },
+        result_selection_config: ResultSelectionConfig {
+            selection_rx_window: Time::from_secs(2.0),
+        },
+        mcui_config: MissionControlUIConfig {},
+        ir_operator_config: IROperatorConfig {},
+        sat_operator_config: SatOperatorConfig {
+            clear_flags_after: Time::from_secs(60.0),
+        },
+    }
 }

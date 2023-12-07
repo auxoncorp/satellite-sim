@@ -28,6 +28,7 @@ pub struct ConsolidatedGroundStation {
     channels: Vec<Box<dyn channel::Step>>,
 }
 
+#[derive(Debug, Clone)]
 pub struct ConsolidatedGroundStationConfig {
     pub base_rack_config: RackConfig,
     pub rack_count: usize,

@@ -25,7 +25,7 @@ impl TimeSourceSubsystem {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TimeSourceConfig {
     pub enable_time_sync: bool,
     pub rtc_drift: Ratio,

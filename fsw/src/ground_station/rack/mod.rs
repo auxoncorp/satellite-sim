@@ -45,7 +45,7 @@ pub struct Rack {
 
 pub type RackId = usize;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct RackConfig {
     pub id: RackId,
     pub time_source_config: TimeSourceConfig,

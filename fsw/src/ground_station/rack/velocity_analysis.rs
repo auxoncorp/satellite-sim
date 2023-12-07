@@ -21,7 +21,7 @@ pub struct VelocityAnalysisSubsystem {
     timeline: TimelineId,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct VelocityAnalysisConfig {}
 
 impl VelocityAnalysisSubsystem {
