@@ -36,6 +36,11 @@ struct Opts {
     #[arg(long)]
     scenario: Option<PathBuf>,
 
+    /// Use the provided initial PRNG seed value for adding variance to the default/nominal
+    /// initial configurations.
+    #[arg(long)]
+    config_prng_seed: Option<u64>,
+
     /// Enable all mutators.
     ///
     /// Overrides any provided configuration file.
@@ -123,6 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scenario = Scenario::load_with_options(
         ScenarioOptions {
             enable_all_mutators: opts.enable_all_mutators,
+            config_prng_seed: opts.config_prng_seed,
         },
         opts.scenario,
     );

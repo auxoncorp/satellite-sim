@@ -13,9 +13,12 @@ use crate::{
     },
 };
 
-pub fn satellite_config(spacecraft_index: SpacecraftIndex) -> SatelliteConfig {
+pub fn satellite_config(
+    spacecraft_index: SpacecraftIndex,
+    config_prng_seed: Option<u64>,
+) -> SatelliteConfig {
     // So that each satellite has a slightly different initial condition
-    let mut prng = Rand64::new(spacecraft_index.into());
+    let mut prng = Rand64::new((config_prng_seed.unwrap_or(0) + spacecraft_index).into());
 
     let id = &SATELLITE_IDS[spacecraft_index as usize];
 

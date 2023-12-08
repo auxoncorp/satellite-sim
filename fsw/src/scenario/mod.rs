@@ -32,11 +32,12 @@ pub struct Scenario {
 #[derive(Debug, Copy, Clone, Default)]
 pub struct ScenarioOptions {
     pub enable_all_mutators: bool,
+    pub config_prng_seed: Option<u64>,
 }
 
 impl Scenario {
     pub fn load_with_options<P: AsRef<Path>>(opts: ScenarioOptions, config: Option<P>) -> Self {
-        let mut cfg = Self::load_inner(config);
+        let mut cfg = Self::load_inner(opts, config);
 
         if opts.enable_all_mutators {
             for sat in cfg.satellite_configs.values_mut() {
@@ -82,16 +83,16 @@ impl Scenario {
     }
 
     pub fn load<P: AsRef<Path>>(config: Option<P>) -> Self {
-        Self::load_inner(config)
+        Self::load_inner(Default::default(), config)
     }
 
-    fn load_inner<P: AsRef<Path>>(config: Option<P>) -> Self {
+    fn load_inner<P: AsRef<Path>>(opts: ScenarioOptions, config: Option<P>) -> Self {
         // Start with the default satellite configs
         let mut satellite_configs: HashMap<SpacecraftIndex, SatelliteConfig> = (0..SATELLITE_IDS
             .len())
             .map(|idx| {
                 let sat_idx = idx as SpacecraftIndex;
-                let cfg = nominal::satellite_config(sat_idx);
+                let cfg = nominal::satellite_config(sat_idx, opts.config_prng_seed);
                 (sat_idx, cfg)
             })
             .collect();
