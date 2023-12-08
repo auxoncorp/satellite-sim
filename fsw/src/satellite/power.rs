@@ -225,7 +225,7 @@ impl PowerSubsystem {
             MODALITY.clear_mutation(m);
         }
 
-        if let Some(m) = self.watchdog_out_of_sync.as_mut() {
+        if let Some(m) = self.constant_temperature.as_mut() {
             MODALITY.clear_mutation(m);
 
             // Re-initial temperature sensor to original model
