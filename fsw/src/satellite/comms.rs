@@ -1,7 +1,7 @@
 use modality_api::{AttrType, TimelineId};
 use modality_mutator_protocol::descriptor::owned::*;
 use nav_types::{NVector, WGS84};
-use oorandom::Rand32;
+use oorandom::{Rand32, Rand64};
 use serde::Serialize;
 use tracing::warn;
 
@@ -16,10 +16,11 @@ use crate::{
     point_failure::{PointFailure, PointFailureConfig},
     satellite::temperature_sensor::{
         TemperatureSensor, TemperatureSensorConfig, TemperatureSensorModel,
+        TemperatureSensorRandomIntervalModelParams,
     },
     satellite::{SatelliteEnvironment, SatelliteId, SatelliteSharedState},
     system::{GroundToSatMessage, SatToGroundMessage},
-    units::{Ratio, Temperature, Time, Timestamp},
+    units::{Ratio, Temperature, TemperatureInterval, Time, Timestamp},
     SimulationComponent,
 };
 
@@ -450,6 +451,37 @@ pub struct CommsFaultConfig {
     /// Enable the data watchdog execution out-of-sync mutator.
     /// See sections 1.3.4.2 of the requirements doc.
     pub watchdog_out_of_sync: bool,
+}
+
+impl CommsConfig {
+    pub fn nominal(_sat: &SatelliteId, mut with_variance: Option<&mut Rand64>) -> Self {
+        let mut variance = |scale| {
+            with_variance
+                .as_mut()
+                .map(|prng| prng.rand_float() * scale)
+                .unwrap_or(0.0)
+        };
+
+        Self {
+            temperature_sensor_config: TemperatureSensorConfig {
+                model: TemperatureSensorModel::RandomInterval(
+                    TemperatureSensorRandomIntervalModelParams {
+                        initial: Temperature::from_degrees_celsius(variance(5.0)),
+                        min: Temperature::from_degrees_celsius(-40.0),
+                        max: Temperature::from_degrees_celsius(40.0),
+                        day: TemperatureInterval::from_degrees_celsius(1.0),
+                        night: TemperatureInterval::from_degrees_celsius(1.0),
+                    },
+                ),
+            },
+            fault_config: Default::default(),
+        }
+    }
+
+    pub fn with_fault_config(mut self, fault_config: CommsFaultConfig) -> Self {
+        self.fault_config = fault_config;
+        self
+    }
 }
 
 impl<'a> SimulationComponent<'a> for CommsSubsystem {

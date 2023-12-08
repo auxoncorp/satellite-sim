@@ -1,5 +1,6 @@
 use modality_api::TimelineId;
 use na::{Isometry3, Point3, Translation3, UnitQuaternion, Vector3};
+use oorandom::Rand64;
 use parry3d_f64::{query::PointQuery, shape::Cone};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -11,10 +12,13 @@ use crate::{
     modality::{kv, AttrsBuilder, MODALITY},
     mutator::{watchdog_out_of_sync_descriptor, GenericBooleanMutator},
     point_failure::{PointFailure, PointFailureConfig},
-    satellite::temperature_sensor::{TemperatureSensor, TemperatureSensorConfig},
+    satellite::temperature_sensor::{
+        TemperatureSensor, TemperatureSensorConfig, TemperatureSensorModel,
+        TemperatureSensorRandomIntervalModelParams,
+    },
     satellite::{SatelliteEnvironment, SatelliteId, SatelliteSharedState},
     system::{CameraSourceId, Detections, IREvent},
-    units::{Angle, ElectricPotential, LuminousIntensity, Temperature, Time},
+    units::{Angle, ElectricPotential, LuminousIntensity, Temperature, TemperatureInterval, Time},
     SimulationComponent,
 };
 
@@ -115,6 +119,56 @@ pub struct VisionFaultConfig {
     /// Enable the data watchdog execution out-of-sync mutator.
     /// See sections 1.3.4.2 of the requirements doc.
     pub watchdog_out_of_sync: bool,
+}
+
+impl VisionConfig {
+    pub fn nominal(sat: &SatelliteId, mut with_variance: Option<&mut Rand64>) -> Self {
+        let mut variance = |scale| {
+            with_variance
+                .as_mut()
+                .map(|prng| prng.rand_float() * scale)
+                .unwrap_or(0.0)
+        };
+
+        Self {
+            scanner_field_of_view_angle: if sat.is_goes() {
+                Angle::from_degrees(6.0)
+            } else {
+                Angle::from_degrees(12.0)
+            },
+            focus_field_of_view_angle: Angle::from_degrees(2.0),
+            update_interval: Time::from_secs(1.0),
+            scanner_camera_temperature_sensor_config: TemperatureSensorConfig {
+                model: TemperatureSensorModel::RandomInterval(
+                    TemperatureSensorRandomIntervalModelParams {
+                        initial: Temperature::from_degrees_celsius(variance(5.0)),
+                        min: Temperature::from_degrees_celsius(-40.0),
+                        max: Temperature::from_degrees_celsius(40.0),
+                        day: TemperatureInterval::from_degrees_celsius(1.0),
+                        night: TemperatureInterval::from_degrees_celsius(1.0),
+                    },
+                ),
+            },
+            focus_camera_temperature_sensor_config: TemperatureSensorConfig {
+                model: TemperatureSensorModel::RandomInterval(
+                    TemperatureSensorRandomIntervalModelParams {
+                        initial: Temperature::from_degrees_celsius(variance(5.0)),
+                        min: Temperature::from_degrees_celsius(-40.0),
+                        max: Temperature::from_degrees_celsius(40.0),
+                        day: TemperatureInterval::from_degrees_celsius(1.0),
+                        night: TemperatureInterval::from_degrees_celsius(1.0),
+                    },
+                ),
+            },
+            focus_camera_disabled: sat.is_goes(),
+            fault_config: Default::default(),
+        }
+    }
+
+    pub fn with_fault_config(mut self, fault_config: VisionFaultConfig) -> Self {
+        self.fault_config = fault_config;
+        self
+    }
 }
 
 #[derive(Debug, Clone)]

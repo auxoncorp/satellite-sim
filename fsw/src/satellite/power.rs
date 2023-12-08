@@ -1,5 +1,6 @@
 use modality_api::{AttrType, TimelineId};
 use modality_mutator_protocol::descriptor::owned::*;
+use oorandom::Rand64;
 use serde::Serialize;
 use tracing::warn;
 
@@ -11,11 +12,14 @@ use crate::{
         GenericSetFloatMutator, MutatorActuatorDescriptor,
     },
     point_failure::{PointFailure, PointFailureConfig},
-    satellite::temperature_sensor::{TemperatureSensor, TemperatureSensorConfig},
+    satellite::temperature_sensor::{
+        TemperatureSensor, TemperatureSensorConfig, TemperatureSensorModel,
+        TemperatureSensorRandomIntervalModelParams,
+    },
     satellite::{SatelliteEnvironment, SatelliteId, SatelliteSharedState},
     units::{
         ElectricCharge, ElectricCurrent, ElectricPotential, PotentialOverCharge, Ratio,
-        Temperature, Time,
+        Temperature, TemperatureInterval, Time,
     },
     SimulationComponent,
 };
@@ -278,6 +282,51 @@ pub struct PowerFaultConfig {
 
     /// Enable the constant temperature mutator.
     pub constant_temperature: bool,
+}
+
+impl PowerConfig {
+    pub fn nominal(sat: &SatelliteId, mut with_variance: Option<&mut Rand64>) -> Self {
+        let mut variance = |scale| {
+            with_variance
+                .as_mut()
+                .map(|prng| prng.rand_float() * scale)
+                .unwrap_or(0.0)
+        };
+
+        Self {
+            battery_max_charge: ElectricCharge::from_amp_hours(40.0),
+            battery_max_voltage: ElectricPotential::from_volts(13.1),
+            battery_discharge_factor: ElectricPotential::from_volts(2.0)
+                / ElectricCharge::from_amp_hours(40.0),
+            solar_panel_charge_rate: if sat.is_goes() {
+                ElectricCurrent::from_milliamps(1190.0 - variance(10.0))
+            } else {
+                ElectricCurrent::from_milliamps(1200.0 + variance(10.0))
+            },
+            system_load: if sat.is_goes() {
+                ElectricCurrent::from_milliamps(550.0 - variance(10.0))
+            } else {
+                ElectricCurrent::from_milliamps(600.0 + variance(10.0))
+            },
+            temperature_sensor_config: TemperatureSensorConfig {
+                model: TemperatureSensorModel::RandomInterval(
+                    TemperatureSensorRandomIntervalModelParams {
+                        initial: Temperature::from_degrees_celsius(variance(5.0)),
+                        min: Temperature::from_degrees_celsius(-40.0),
+                        max: Temperature::from_degrees_celsius(40.0),
+                        day: TemperatureInterval::from_degrees_celsius(1.0),
+                        night: TemperatureInterval::from_degrees_celsius(1.0),
+                    },
+                ),
+            },
+            fault_config: Default::default(),
+        }
+    }
+
+    pub fn with_fault_config(mut self, fault_config: PowerFaultConfig) -> Self {
+        self.fault_config = fault_config;
+        self
+    }
 }
 
 #[derive(Debug, Clone)]

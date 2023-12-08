@@ -1,4 +1,5 @@
 use modality_api::TimelineId;
+use oorandom::Rand64;
 use serde::Serialize;
 use tracing::warn;
 
@@ -6,12 +7,15 @@ use crate::{
     channel::{Receiver, Sender},
     modality::{AttrsBuilder, MODALITY},
     mutator::{watchdog_out_of_sync_descriptor, GenericBooleanMutator},
-    satellite::{SatelliteEnvironment, SatelliteId, SatelliteSharedState},
+    satellite::{
+        SatelliteEnvironment, SatelliteId, SatelliteSharedState, TemperatureSensorModel,
+        TemperatureSensorRandomIntervalModelParams,
+    },
     system::{
         Detections, GroundToSatMessage, SatErrorFlag, SatToGroundMessage, SatToGroundMessageBody,
         SatelliteTelemetry,
     },
-    units::{Temperature, Time, Timestamp},
+    units::{Temperature, TemperatureInterval, Time, Timestamp},
     SimulationComponent,
 };
 
@@ -43,6 +47,39 @@ pub struct ComputeConfig {
     pub collect_timeout: Time,
     pub temperature_sensor_config: TemperatureSensorConfig,
     pub fault_config: ComputeFaultConfig,
+}
+
+impl ComputeConfig {
+    pub fn nominal(_sat: &SatelliteId, mut with_variance: Option<&mut Rand64>) -> Self {
+        let mut variance = |scale| {
+            with_variance
+                .as_mut()
+                .map(|prng| prng.rand_float() * scale)
+                .unwrap_or(0.0)
+        };
+
+        Self {
+            telemetry_rate: Time::from_secs(1.0),
+            collect_timeout: Time::from_millis(500.0),
+            temperature_sensor_config: TemperatureSensorConfig {
+                model: TemperatureSensorModel::RandomInterval(
+                    TemperatureSensorRandomIntervalModelParams {
+                        initial: Temperature::from_degrees_celsius(variance(5.0)),
+                        min: Temperature::from_degrees_celsius(-40.0),
+                        max: Temperature::from_degrees_celsius(40.0),
+                        day: TemperatureInterval::from_degrees_celsius(1.0),
+                        night: TemperatureInterval::from_degrees_celsius(1.0),
+                    },
+                ),
+            },
+            fault_config: Default::default(),
+        }
+    }
+
+    pub fn with_fault_config(mut self, fault_config: ComputeFaultConfig) -> Self {
+        self.fault_config = fault_config;
+        self
+    }
 }
 
 /// Parameters for the compute point failures.

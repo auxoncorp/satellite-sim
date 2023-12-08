@@ -1,6 +1,8 @@
 use crate::{
     ground_station, point_failure,
-    satellite::{comms, compute, imu, power, temperature_sensor, vision, SatCatId, SATELLITE_IDS},
+    satellite::{
+        comms, compute, imu, power, temperature_sensor, vision, SatelliteId, SATELLITE_IDS,
+    },
     units::{
         Angle, ElectricCharge, ElectricCurrent, ElectricPotential, Length, LuminousIntensity,
         PotentialOverCharge, Temperature, TemperatureInterval, TemperatureIntervalRate, Time,
@@ -8,6 +10,7 @@ use crate::{
     },
 };
 use nav_types::WGS84;
+use oorandom::Rand64;
 use serde::Deserialize;
 use std::{collections::HashSet, fs, path::Path};
 
@@ -15,6 +18,8 @@ use std::{collections::HashSet, fs, path::Path};
 #[serde(default, rename_all = "kebab-case")]
 pub struct Config {
     pub name: Option<String>,
+    pub enable_all_mutators: Option<bool>,
+    pub apply_variance: Option<bool>,
     #[serde(alias = "temperature-sensor")]
     pub temperature_sensors: Vec<TemperatureSensor>,
     #[serde(alias = "point-failure")]
@@ -102,8 +107,10 @@ impl Config {
         cfg
     }
 
-    pub(crate) fn satellite(&self, id: SatCatId) -> Option<&Satellite> {
-        self.satellites.iter().find(|s| s.satcat_id() == id)
+    pub(crate) fn satellite(&self, id: &SatelliteId) -> Option<&Satellite> {
+        self.satellites
+            .iter()
+            .find(|s| s.id().satcat_id == id.satcat_id)
     }
 
     fn temperature_sensor(&self, name: &str) -> Option<&TemperatureSensor> {
@@ -118,7 +125,11 @@ impl Config {
         self.mutators.iter().find(|t| t.name == name)
     }
 
-    pub(crate) fn power_config(&self, id: SatCatId) -> Option<power::PowerConfig> {
+    pub(crate) fn power_config(
+        &self,
+        id: &SatelliteId,
+        prng: &mut Rand64,
+    ) -> Option<power::PowerConfig> {
         let sat = self.satellite(id)?;
         let cfg = sat.power.as_ref().map(|n| {
             self.power_subsystems
@@ -126,10 +137,12 @@ impl Config {
                 .find(|p| &p.name == n)
                 .expect("Missing power subsystem config")
         })?;
-        let temperature_sensor_config = self
-            .temperature_sensor(&cfg.temperature_sensor)
-            .unwrap()
-            .into();
+        let apply_variance = self.apply_variance.or(sat.apply_variance).unwrap_or(false);
+        let enable_all_mutators = self
+            .enable_all_mutators
+            .or(sat.enable_all_mutators)
+            .unwrap_or(false);
+
         let fault_config = cfg
             .fault
             .as_ref()
@@ -138,7 +151,7 @@ impl Config {
                     .solar_panel_degraded
                     .as_ref()
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
-                    .unwrap_or(false),
+                    .unwrap_or(enable_all_mutators),
                 battery_degraded: f.battery_degraded.as_ref().map(|f| {
                     (
                         self.point_failure(&f.name).map(|fc| fc.into()).unwrap(),
@@ -149,28 +162,58 @@ impl Config {
                     .watchdog_out_of_sync
                     .as_ref()
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
-                    .unwrap_or(false),
+                    .unwrap_or(enable_all_mutators),
                 constant_temperature: f
                     .constant_temperature
                     .as_ref()
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
-                    .unwrap_or(false),
+                    .unwrap_or(enable_all_mutators),
             })
             .unwrap_or_default();
-        Some(power::PowerConfig {
-            battery_max_charge: ElectricCharge::from_amp_hours(cfg.battery_max_charge),
-            battery_max_voltage: ElectricPotential::from_volts(cfg.battery_max_voltage),
-            battery_discharge_factor: PotentialOverCharge::from_volts_per_coulomb(
-                cfg.battery_discharge_factor,
-            ),
-            solar_panel_charge_rate: ElectricCurrent::from_amps(cfg.solar_panel_charge_rate),
-            system_load: ElectricCurrent::from_amps(cfg.system_load),
-            temperature_sensor_config,
-            fault_config,
-        })
+
+        let ncfg = power::PowerConfig::nominal(id, apply_variance.then_some(prng))
+            .with_fault_config(fault_config);
+
+        if let Some(cfgf) = cfg.fields.as_ref() {
+            let temperature_sensor_config = cfgf
+                .temperature_sensor
+                .as_ref()
+                .map(|t| self.temperature_sensor(t).unwrap().into())
+                .unwrap_or(ncfg.temperature_sensor_config);
+            Some(power::PowerConfig {
+                battery_max_charge: ElectricCharge::from_amp_hours(
+                    cfgf.battery_max_charge
+                        .unwrap_or_else(|| ncfg.battery_max_charge.as_amp_hours()),
+                ),
+                battery_max_voltage: ElectricPotential::from_volts(
+                    cfgf.battery_max_voltage
+                        .unwrap_or_else(|| ncfg.battery_max_voltage.as_volts()),
+                ),
+                battery_discharge_factor: PotentialOverCharge::from_volts_per_coulomb(
+                    cfgf.battery_discharge_factor
+                        .unwrap_or_else(|| ncfg.battery_discharge_factor.as_volts_per_coulomb()),
+                ),
+                solar_panel_charge_rate: ElectricCurrent::from_amps(
+                    cfgf.solar_panel_charge_rate
+                        .unwrap_or_else(|| ncfg.solar_panel_charge_rate.as_amps()),
+                ),
+                system_load: ElectricCurrent::from_amps(
+                    cfgf.system_load
+                        .unwrap_or_else(|| ncfg.system_load.as_amps()),
+                ),
+                temperature_sensor_config,
+                fault_config: ncfg.fault_config,
+            })
+        } else {
+            Some(ncfg)
+        }
     }
 
-    pub(crate) fn compute_config(&self, id: SatCatId) -> Option<compute::ComputeConfig> {
+    pub(crate) fn compute_config(
+        &self,
+        id: &SatelliteId,
+        prng: &mut Rand64,
+    ) -> Option<compute::ComputeConfig> {
         let sat = self.satellite(id)?;
         let cfg = sat.compute.as_ref().map(|n| {
             self.compute_subsystems
@@ -178,10 +221,12 @@ impl Config {
                 .find(|p| &p.name == n)
                 .expect("Missing imu subsystem config")
         })?;
-        let temperature_sensor_config = self
-            .temperature_sensor(&cfg.temperature_sensor)
-            .unwrap()
-            .into();
+        let apply_variance = self.apply_variance.or(sat.apply_variance).unwrap_or(false);
+        let enable_all_mutators = self
+            .enable_all_mutators
+            .or(sat.enable_all_mutators)
+            .unwrap_or(false);
+
         let fault_config = cfg
             .fault
             .as_ref()
@@ -190,18 +235,41 @@ impl Config {
                     .watchdog_out_of_sync
                     .as_ref()
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
-                    .unwrap_or(false),
+                    .unwrap_or(enable_all_mutators),
             })
             .unwrap_or_default();
-        Some(compute::ComputeConfig {
-            telemetry_rate: Time::from_secs(cfg.telemetry_rate),
-            collect_timeout: Time::from_secs(cfg.collect_timeout),
-            temperature_sensor_config,
-            fault_config,
-        })
+
+        let ncfg = compute::ComputeConfig::nominal(id, apply_variance.then_some(prng))
+            .with_fault_config(fault_config);
+
+        if let Some(cfgf) = cfg.fields.as_ref() {
+            let temperature_sensor_config = cfgf
+                .temperature_sensor
+                .as_ref()
+                .map(|t| self.temperature_sensor(t).unwrap().into())
+                .unwrap_or(ncfg.temperature_sensor_config);
+            Some(compute::ComputeConfig {
+                telemetry_rate: Time::from_secs(
+                    cfgf.telemetry_rate
+                        .unwrap_or_else(|| ncfg.telemetry_rate.as_secs()),
+                ),
+                collect_timeout: Time::from_secs(
+                    cfgf.collect_timeout
+                        .unwrap_or_else(|| ncfg.collect_timeout.as_secs()),
+                ),
+                temperature_sensor_config,
+                fault_config: ncfg.fault_config,
+            })
+        } else {
+            Some(ncfg)
+        }
     }
 
-    pub(crate) fn comms_config(&self, id: SatCatId) -> Option<comms::CommsConfig> {
+    pub(crate) fn comms_config(
+        &self,
+        id: &SatelliteId,
+        prng: &mut Rand64,
+    ) -> Option<comms::CommsConfig> {
         let sat = self.satellite(id)?;
         let cfg = sat.comms.as_ref().map(|n| {
             self.comms_subsystems
@@ -209,10 +277,12 @@ impl Config {
                 .find(|p| &p.name == n)
                 .expect("Missing comms subsystem config")
         })?;
-        let temperature_sensor_config = self
-            .temperature_sensor(&cfg.temperature_sensor)
-            .unwrap()
-            .into();
+        let apply_variance = self.apply_variance.or(sat.apply_variance).unwrap_or(false);
+        let enable_all_mutators = self
+            .enable_all_mutators
+            .or(sat.enable_all_mutators)
+            .unwrap_or(false);
+
         let fault_config = cfg
             .fault
             .as_ref()
@@ -222,22 +292,22 @@ impl Config {
                     .gps_offline_rtc_drift
                     .as_ref()
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
-                    .unwrap_or(false),
+                    .unwrap_or(enable_all_mutators),
                 gps_offline: f
                     .gps_offline
                     .as_ref()
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
-                    .unwrap_or(false),
+                    .unwrap_or(enable_all_mutators),
                 ground_transceiver_failure: f
                     .ground_transceiver_failure
                     .as_ref()
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
-                    .unwrap_or(false),
+                    .unwrap_or(enable_all_mutators),
                 ground_transceiver_partial_failure: f
                     .ground_transceiver_partial_failure
                     .as_ref()
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
-                    .unwrap_or(false),
+                    .unwrap_or(enable_all_mutators),
                 rtc_degraded: f
                     .rtc_degraded
                     .as_ref()
@@ -246,16 +316,33 @@ impl Config {
                     .watchdog_out_of_sync
                     .as_ref()
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
-                    .unwrap_or(false),
+                    .unwrap_or(enable_all_mutators),
             })
             .unwrap_or_default();
-        Some(comms::CommsConfig {
-            temperature_sensor_config,
-            fault_config,
-        })
+
+        let ncfg = comms::CommsConfig::nominal(id, apply_variance.then_some(prng))
+            .with_fault_config(fault_config);
+
+        if let Some(cfgf) = cfg.fields.as_ref() {
+            let temperature_sensor_config = cfgf
+                .temperature_sensor
+                .as_ref()
+                .map(|t| self.temperature_sensor(t).unwrap().into())
+                .unwrap_or(ncfg.temperature_sensor_config);
+            Some(comms::CommsConfig {
+                temperature_sensor_config,
+                fault_config: ncfg.fault_config,
+            })
+        } else {
+            Some(ncfg)
+        }
     }
 
-    pub(crate) fn vision_config(&self, id: SatCatId) -> Option<vision::VisionConfig> {
+    pub(crate) fn vision_config(
+        &self,
+        id: &SatelliteId,
+        prng: &mut Rand64,
+    ) -> Option<vision::VisionConfig> {
         let sat = self.satellite(id)?;
         let cfg = sat.vision.as_ref().map(|n| {
             self.vision_subsystems
@@ -263,14 +350,12 @@ impl Config {
                 .find(|p| &p.name == n)
                 .expect("Missing vision subsystem config")
         })?;
-        let focus_camera_temperature_sensor_config = self
-            .temperature_sensor(&cfg.focus_camera_temperature_sensor)
-            .unwrap()
-            .into();
-        let scanner_camera_temperature_sensor_config = self
-            .temperature_sensor(&cfg.scanner_camera_temperature_sensor)
-            .unwrap()
-            .into();
+        let apply_variance = self.apply_variance.or(sat.apply_variance).unwrap_or(false);
+        let enable_all_mutators = self
+            .enable_all_mutators
+            .or(sat.enable_all_mutators)
+            .unwrap_or(false);
+
         let fault_config = cfg
             .fault
             .as_ref()
@@ -301,22 +386,48 @@ impl Config {
                     .watchdog_out_of_sync
                     .as_ref()
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
-                    .unwrap_or(false),
+                    .unwrap_or(enable_all_mutators),
             })
             .unwrap_or_default();
 
-        Some(vision::VisionConfig {
-            scanner_field_of_view_angle: Angle::from_degrees(cfg.scanner_field_of_view),
-            focus_field_of_view_angle: Angle::from_degrees(cfg.focus_field_of_view),
-            update_interval: Time::from_secs(cfg.update_interval),
-            focus_camera_temperature_sensor_config,
-            scanner_camera_temperature_sensor_config,
-            focus_camera_disabled: cfg.focus_camera_disabled.unwrap_or(false),
-            fault_config,
-        })
+        let ncfg = vision::VisionConfig::nominal(id, apply_variance.then_some(prng))
+            .with_fault_config(fault_config);
+
+        if let Some(cfgf) = cfg.fields.as_ref() {
+            let focus_camera_temperature_sensor_config = cfgf
+                .focus_camera_temperature_sensor
+                .as_ref()
+                .map(|t| self.temperature_sensor(t).unwrap().into())
+                .unwrap_or(ncfg.focus_camera_temperature_sensor_config);
+            let scanner_camera_temperature_sensor_config = cfgf
+                .scanner_camera_temperature_sensor
+                .as_ref()
+                .map(|t| self.temperature_sensor(t).unwrap().into())
+                .unwrap_or(ncfg.scanner_camera_temperature_sensor_config);
+            Some(vision::VisionConfig {
+                scanner_field_of_view_angle: Angle::from_degrees(
+                    cfgf.scanner_field_of_view
+                        .unwrap_or_else(|| ncfg.scanner_field_of_view_angle.as_degrees()),
+                ),
+                focus_field_of_view_angle: Angle::from_degrees(
+                    cfgf.focus_field_of_view
+                        .unwrap_or_else(|| ncfg.focus_field_of_view_angle.as_degrees()),
+                ),
+                update_interval: Time::from_secs(
+                    cfgf.update_interval
+                        .unwrap_or_else(|| ncfg.update_interval.as_secs()),
+                ),
+                focus_camera_temperature_sensor_config,
+                scanner_camera_temperature_sensor_config,
+                focus_camera_disabled: cfgf.focus_camera_disabled.unwrap_or(false),
+                fault_config: ncfg.fault_config,
+            })
+        } else {
+            Some(ncfg)
+        }
     }
 
-    pub(crate) fn imu_config(&self, id: SatCatId) -> Option<imu::ImuConfig> {
+    pub(crate) fn imu_config(&self, id: &SatelliteId, prng: &mut Rand64) -> Option<imu::ImuConfig> {
         let sat = self.satellite(id)?;
         let cfg = sat.imu.as_ref().map(|n| {
             self.imu_subsystems
@@ -324,10 +435,12 @@ impl Config {
                 .find(|p| &p.name == n)
                 .expect("Missing imu subsystem config")
         })?;
-        let temperature_sensor_config = self
-            .temperature_sensor(&cfg.temperature_sensor)
-            .unwrap()
-            .into();
+        let apply_variance = self.apply_variance.or(sat.apply_variance).unwrap_or(false);
+        let enable_all_mutators = self
+            .enable_all_mutators
+            .or(sat.enable_all_mutators)
+            .unwrap_or(false);
+
         let fault_config = cfg
             .fault
             .as_ref()
@@ -344,19 +457,31 @@ impl Config {
                     .watchdog_out_of_sync
                     .as_ref()
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
-                    .unwrap_or(false),
+                    .unwrap_or(enable_all_mutators),
                 constant_temperature: f
                     .constant_temperature
                     .as_ref()
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
-                    .unwrap_or(false),
+                    .unwrap_or(enable_all_mutators),
             })
             .unwrap_or_default();
 
-        Some(imu::ImuConfig {
-            temperature_sensor_config,
-            fault_config,
-        })
+        let ncfg = imu::ImuConfig::nominal(id, apply_variance.then_some(prng))
+            .with_fault_config(fault_config);
+
+        if let Some(cfgf) = cfg.fields.as_ref() {
+            let temperature_sensor_config = cfgf
+                .temperature_sensor
+                .as_ref()
+                .map(|t| self.temperature_sensor(t).unwrap().into())
+                .unwrap_or(ncfg.temperature_sensor_config);
+            Some(imu::ImuConfig {
+                temperature_sensor_config,
+                fault_config: ncfg.fault_config,
+            })
+        } else {
+            Some(ncfg)
+        }
     }
 
     pub(crate) fn relay_ground_station_configs(
@@ -365,30 +490,37 @@ impl Config {
         self.relay_ground_stations
             .iter()
             .cloned()
-            .map(|cfg| ground_station::RelayGroundStationConfig {
-                id: cfg.id,
-                name: cfg.name,
-                position: WGS84::from_degrees_and_meters(cfg.latitude, cfg.longitude, 0.0).into(),
-                fault_config: cfg
-                    .fault
-                    .map(|f| ground_station::RelayGroundStationFaultConfig {
-                        rtc_drift: f
-                            .rtc_drift
-                            .as_ref()
-                            .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
-                            .unwrap_or(false),
-                        satellite_to_cgs_delay: f
-                            .satellite_to_cgs_delay
-                            .as_ref()
-                            .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
-                            .unwrap_or(false),
-                        cgs_to_satellite_delay: f
-                            .cgs_to_satellite_delay
-                            .as_ref()
-                            .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
-                            .unwrap_or(false),
-                    })
-                    .unwrap_or_default(),
+            .map(|cfg| {
+                let enable_all_mutators = self
+                    .enable_all_mutators
+                    .or(cfg.enable_all_mutators)
+                    .unwrap_or(false);
+                ground_station::RelayGroundStationConfig {
+                    id: cfg.id,
+                    name: cfg.name,
+                    position: WGS84::from_degrees_and_meters(cfg.latitude, cfg.longitude, 0.0)
+                        .into(),
+                    fault_config: cfg
+                        .fault
+                        .map(|f| ground_station::RelayGroundStationFaultConfig {
+                            rtc_drift: f
+                                .rtc_drift
+                                .as_ref()
+                                .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                                .unwrap_or(enable_all_mutators),
+                            satellite_to_cgs_delay: f
+                                .satellite_to_cgs_delay
+                                .as_ref()
+                                .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                                .unwrap_or(enable_all_mutators),
+                            cgs_to_satellite_delay: f
+                                .cgs_to_satellite_delay
+                                .as_ref()
+                                .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                                .unwrap_or(enable_all_mutators),
+                        })
+                        .unwrap_or_default(),
+                }
             })
             .collect()
     }
@@ -397,6 +529,10 @@ impl Config {
         &self,
     ) -> Option<ground_station::ConsolidatedGroundStationConfig> {
         self.consolidated_ground_station.clone().map(|cfg| {
+            let enable_all_mutators = self
+                .enable_all_mutators
+                .or(cfg.enable_all_mutators)
+                .unwrap_or(false);
             ground_station::ConsolidatedGroundStationConfig {
                 rack_count: cfg.rack_count,
                 base_rack_config: ground_station::RackConfig {
@@ -410,7 +546,7 @@ impl Config {
                                     .rtc_drift
                                     .as_ref()
                                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
-                                    .unwrap_or(false),
+                                    .unwrap_or(enable_all_mutators),
                             })
                             .unwrap_or_default(),
                     },
@@ -440,7 +576,7 @@ impl Config {
                                     .rack_offline
                                     .as_ref()
                                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
-                                    .unwrap_or(false),
+                                    .unwrap_or(enable_all_mutators),
                             })
                             .unwrap_or_default(),
                     },
@@ -462,6 +598,8 @@ impl Config {
 #[serde(rename_all = "kebab-case")]
 pub struct Satellite {
     pub id: toml::Value,
+    pub enable_all_mutators: Option<bool>,
+    pub apply_variance: Option<bool>,
     pub power: Option<String>,
     pub compute: Option<String>,
     pub comms: Option<String>,
@@ -470,7 +608,7 @@ pub struct Satellite {
 }
 
 impl Satellite {
-    pub(crate) fn sat_idx(&self) -> usize {
+    fn sat_idx(&self) -> usize {
         for (idx, sat) in SATELLITE_IDS.iter().enumerate() {
             if let Some(s) = self.id.as_str() {
                 if s == sat.name {
@@ -489,8 +627,8 @@ impl Satellite {
         panic!("Invalid satellite configuration, id must be a value string name or satcat ID");
     }
 
-    pub(crate) fn satcat_id(&self) -> SatCatId {
-        SATELLITE_IDS[self.sat_idx()].satcat_id
+    fn id(&self) -> &SatelliteId {
+        &SATELLITE_IDS[self.sat_idx()]
     }
 }
 
@@ -498,13 +636,20 @@ impl Satellite {
 #[serde(rename_all = "kebab-case")]
 pub struct PowerSubsystem {
     pub name: String,
-    pub battery_max_charge: f64,
-    pub battery_max_voltage: f64,
-    pub battery_discharge_factor: f64,
-    pub solar_panel_charge_rate: f64,
-    pub system_load: f64,
-    pub temperature_sensor: String,
+    #[serde(flatten)]
+    pub fields: Option<PowerFields>,
     pub fault: Option<PowerFault>,
+}
+
+#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct PowerFields {
+    pub battery_max_charge: Option<f64>,
+    pub battery_max_voltage: Option<f64>,
+    pub battery_discharge_factor: Option<f64>,
+    pub solar_panel_charge_rate: Option<f64>,
+    pub system_load: Option<f64>,
+    pub temperature_sensor: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Debug, Default, Deserialize)]
@@ -520,10 +665,17 @@ pub struct PowerFault {
 #[serde(rename_all = "kebab-case")]
 pub struct ComputeSubsystem {
     pub name: String,
-    pub telemetry_rate: f64,
-    pub collect_timeout: f64,
-    pub temperature_sensor: String,
+    #[serde(flatten)]
+    pub fields: Option<ComputeFields>,
     pub fault: Option<ComputeFault>,
+}
+
+#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ComputeFields {
+    pub telemetry_rate: Option<f64>,
+    pub collect_timeout: Option<f64>,
+    pub temperature_sensor: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Debug, Default, Deserialize)]
@@ -536,8 +688,15 @@ pub struct ComputeFault {
 #[serde(rename_all = "kebab-case")]
 pub struct CommsSubsystem {
     pub name: String,
-    pub temperature_sensor: String,
+    #[serde(flatten)]
+    pub fields: Option<CommsFields>,
     pub fault: Option<CommsFault>,
+}
+
+#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct CommsFields {
+    pub temperature_sensor: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Debug, Default, Deserialize)]
@@ -556,13 +715,20 @@ pub struct CommsFault {
 #[serde(rename_all = "kebab-case")]
 pub struct VisionSubsystem {
     pub name: String,
-    pub scanner_field_of_view: f64,
-    pub focus_field_of_view: f64,
-    pub update_interval: f64,
-    pub focus_camera_temperature_sensor: String,
-    pub scanner_camera_temperature_sensor: String,
-    pub focus_camera_disabled: Option<bool>,
+    #[serde(flatten)]
+    pub fields: Option<VisionFields>,
     pub fault: Option<VisionFault>,
+}
+
+#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct VisionFields {
+    pub scanner_field_of_view: Option<f64>,
+    pub focus_field_of_view: Option<f64>,
+    pub update_interval: Option<f64>,
+    pub focus_camera_temperature_sensor: Option<String>,
+    pub scanner_camera_temperature_sensor: Option<String>,
+    pub focus_camera_disabled: Option<bool>,
 }
 
 #[derive(Clone, PartialEq, Debug, Default, Deserialize)]
@@ -582,8 +748,15 @@ pub struct VisionFault {
 #[serde(rename_all = "kebab-case")]
 pub struct ImuSubsystem {
     pub name: String,
-    pub temperature_sensor: String,
+    #[serde(flatten)]
+    pub fields: Option<ImuFields>,
     pub fault: Option<ImuFault>,
+}
+
+#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ImuFields {
+    pub temperature_sensor: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Debug, Default, Deserialize)]
@@ -784,6 +957,7 @@ pub struct Mutator {
 #[derive(Clone, PartialEq, PartialOrd, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct ConsolidatedGroundStation {
+    pub enable_all_mutators: Option<bool>,
     pub rack_count: usize,
     pub correlation_window: f64,
     pub prune_window: f64,
@@ -809,6 +983,7 @@ pub struct ConsolidatedGroundStationFault {
 pub struct RelayGroundStation {
     pub name: String,
     pub id: u32,
+    pub enable_all_mutators: Option<bool>,
     pub latitude: f64,
     pub longitude: f64,
     pub fault: Option<RelayGroundStationFault>,
@@ -839,11 +1014,14 @@ pub struct IREvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::satellite::SatCatId;
     use approx::assert_relative_eq;
     use indoc::indoc;
 
     const FULL_CONFIG_TOML: &str = indoc! {r#"
         name = 'my scenario'
+        enable-all-mutators = false
+        apply-variance = false
 
         [[temperature-sensor]]
         name = 'ts0'
@@ -885,6 +1063,14 @@ mod tests {
             watchdog-out-of-sync = 'm0'
             solar-panel-degraded = 'm0'
             constant-temperature = 'm0'
+                [power-subsystem.fault.battery-degraded]
+                name = 'pf0'
+                value = 1.1
+
+        [[power-subsystem]]
+        name = 'power1'
+        battery-max-charge = 2.2
+            [power-subsystem.fault]
                 [power-subsystem.fault.battery-degraded]
                 name = 'pf0'
                 value = 1.1
@@ -937,13 +1123,20 @@ mod tests {
 
         [[satellite]]
         id = 'GALAXY-1'
+        enable-all-mutators = true
+        apply-variance = true
         power = 'power0'
         compute = 'compute0'
         comms = 'comms0'
         vision = 'vision0'
         imu = 'imu0'
+        
+        [[satellite]]
+        id = 46114
+        power = 'power1'
 
         [consolidated-ground-station]
+        enable-all-mutators = false
         rack-count = 3
         correlation-window = 3.0
         prune-window = 10.0
@@ -959,8 +1152,9 @@ mod tests {
             rack-offline = 'm0'
 
         [[relay-ground-station]]
-        id = 1
         name = 'RGS'
+        id = 1
+        enable-all-mutators = false
         latitude = 0.23
         longitude = 0.44
             [relay-ground-station.fault]
@@ -985,11 +1179,13 @@ mod tests {
         let cfg = Config::from_str_checked(FULL_CONFIG_TOML);
         dbg!(&cfg);
         assert_eq!(cfg.name.as_deref(), Some("my scenario"));
+        assert_eq!(cfg.enable_all_mutators, Some(false));
+        assert_eq!(cfg.apply_variance, Some(false));
         assert_eq!(cfg.temperature_sensors.len(), 2);
         assert_eq!(cfg.point_failures.len(), 2);
         assert_eq!(cfg.mutators.len(), 1);
-        assert_eq!(cfg.satellites.len(), 1);
-        assert_eq!(cfg.power_subsystems.len(), 1);
+        assert_eq!(cfg.satellites.len(), 2);
+        assert_eq!(cfg.power_subsystems.len(), 2);
         assert_eq!(cfg.compute_subsystems.len(), 1);
         assert_eq!(cfg.comms_subsystems.len(), 1);
         assert_eq!(cfg.vision_subsystems.len(), 1);
@@ -997,14 +1193,21 @@ mod tests {
         assert_eq!(cfg.relay_ground_stations.len(), 1);
         assert_eq!(cfg.ir_events.len(), 1);
 
-        let id = SatCatId::from(45026);
-        assert_eq!(cfg.satellites[0].satcat_id(), id);
+        let mut prng = Rand64::new(0);
+        let id = &SATELLITE_IDS[0];
+        assert_eq!(id.satcat_id, SatCatId::from(45026));
+        assert_eq!(cfg.satellites[0].id().satcat_id, id.satcat_id);
+        assert_eq!(cfg.satellites[0].enable_all_mutators, Some(true));
+        assert_eq!(cfg.satellites[0].apply_variance, Some(true));
         assert!(cfg.satellite(id).is_some());
-        assert!(cfg.power_config(id).is_some());
-        assert!(cfg.compute_config(id).is_some());
-        assert!(cfg.comms_config(id).is_some());
-        assert!(cfg.vision_config(id).is_some());
-        assert!(cfg.imu_config(id).is_some());
+        assert!(cfg.power_config(id, &mut prng).is_some());
+        assert!(cfg.compute_config(id, &mut prng).is_some());
+        assert!(cfg.comms_config(id, &mut prng).is_some());
+        assert!(cfg.vision_config(id, &mut prng).is_some());
+        assert!(cfg.imu_config(id, &mut prng).is_some());
+
+        assert_eq!(cfg.satellites[1].id().satcat_id, SatCatId::from(46114));
+        assert!(cfg.power_config(&SATELLITE_IDS[1], &mut prng).is_some());
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use modality_api::TimelineId;
 use na::Vector3;
+use oorandom::Rand64;
 use serde::Serialize;
 use tracing::warn;
 
@@ -11,9 +12,15 @@ use crate::{
         GenericSetFloatMutator, MutatorActuatorDescriptor,
     },
     point_failure::{PointFailure, PointFailureConfig},
-    satellite::temperature_sensor::{TemperatureSensor, TemperatureSensorConfig},
+    satellite::temperature_sensor::{
+        TemperatureSensor, TemperatureSensorConfig, TemperatureSensorModel,
+        TemperatureSensorRandomIntervalModelParams,
+    },
     satellite::{SatelliteEnvironment, SatelliteId, SatelliteSharedState},
-    units::{Acceleration, AngularVelocity, MagneticFluxDensity, Temperature, Time, Timestamp},
+    units::{
+        Acceleration, AngularVelocity, MagneticFluxDensity, Temperature, TemperatureInterval, Time,
+        Timestamp,
+    },
     SimulationComponent,
 };
 
@@ -69,6 +76,37 @@ pub struct ImuFaultConfig {
 
     /// Enable the constant temperature mutator.
     pub constant_temperature: bool,
+}
+
+impl ImuConfig {
+    pub fn nominal(_sat: &SatelliteId, mut with_variance: Option<&mut Rand64>) -> Self {
+        let mut variance = |scale| {
+            with_variance
+                .as_mut()
+                .map(|prng| prng.rand_float() * scale)
+                .unwrap_or(0.0)
+        };
+
+        Self {
+            temperature_sensor_config: TemperatureSensorConfig {
+                model: TemperatureSensorModel::RandomInterval(
+                    TemperatureSensorRandomIntervalModelParams {
+                        initial: Temperature::from_degrees_celsius(variance(5.0)),
+                        min: Temperature::from_degrees_celsius(-40.0),
+                        max: Temperature::from_degrees_celsius(40.0),
+                        day: TemperatureInterval::from_degrees_celsius(1.0),
+                        night: TemperatureInterval::from_degrees_celsius(1.0),
+                    },
+                ),
+            },
+            fault_config: Default::default(),
+        }
+    }
+
+    pub fn with_fault_config(mut self, fault_config: ImuFaultConfig) -> Self {
+        self.fault_config = fault_config;
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

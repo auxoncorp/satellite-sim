@@ -13,13 +13,15 @@ use crate::{
         ResultSelectionConfig, SatOperatorConfig, SynthesisConfig, TimeSourceConfig,
         VelocityAnalysisConfig,
     },
-    satellite::{SatelliteConfig, SATELLITE_IDS},
+    satellite::{
+        CommsConfig, ComputeConfig, ImuConfig, PowerConfig, SatelliteConfig, VisionConfig,
+        SATELLITE_IDS,
+    },
     system::{CameraSourceId, IREvent},
     units::{Angle, Length, LuminousIntensity, Time, Velocity},
 };
 
 pub mod config;
-pub mod nominal;
 
 #[derive(Debug, Clone)]
 pub struct Scenario {
@@ -87,91 +89,82 @@ impl Scenario {
     }
 
     fn load_inner<P: AsRef<Path>>(opts: ScenarioOptions, config: Option<P>) -> Self {
-        // Start with the default satellite configs
-        let mut satellite_configs: HashMap<SpacecraftIndex, SatelliteConfig> = (0..SATELLITE_IDS
-            .len())
-            .map(|idx| {
-                let sat_idx = idx as SpacecraftIndex;
-                let cfg = nominal::satellite_config(sat_idx, opts.config_prng_seed);
-                (sat_idx, cfg)
-            })
-            .collect();
-
-        if let Some(cfg_path) = config.as_ref() {
+        let cfg = if let Some(cfg_path) = config.as_ref() {
             info!(
                 config = %cfg_path.as_ref().display(),
                 "Loading scenario from config file",
             );
-            let cfg = Config::load(cfg_path);
-
-            // Apply user configs on a per-satellite per-subsystem basis
-            for sat_cfg in satellite_configs.values_mut() {
-                if cfg.satellite(sat_cfg.id.satcat_id).is_some() {
-                    if let Some(c) = cfg.power_config(sat_cfg.id.satcat_id) {
-                        sat_cfg.power_config = c;
-                    }
-                    if let Some(c) = cfg.compute_config(sat_cfg.id.satcat_id) {
-                        sat_cfg.compute_config = c;
-                    }
-                    if let Some(c) = cfg.comms_config(sat_cfg.id.satcat_id) {
-                        sat_cfg.comms_config = c;
-                    }
-                    if let Some(c) = cfg.vision_config(sat_cfg.id.satcat_id) {
-                        sat_cfg.vision_config = c;
-                    }
-                    if let Some(c) = cfg.imu_config(sat_cfg.id.satcat_id) {
-                        sat_cfg.imu_config = c;
-                    }
-                }
-            }
-
-            let relays = cfg.relay_ground_station_configs();
-            let ground_stations = if relays.is_empty() {
-                all_known_ground_stations()
-            } else {
-                relays.into_iter().map(|rgs| (rgs.id, rgs)).collect()
-            };
-
-            let ir_events = if cfg.ir_events.is_empty() {
-                basic_scheduled_ir_events()
-            } else {
-                cfg.ir_events
-                    .iter()
-                    .cloned()
-                    .map(|ire| {
-                        ScheduledIREvent::from_degrees_and_meters(
-                            Time::from_secs(ire.activate_at),
-                            ire.deactivate_at.map(Time::from_secs),
-                            ire.ground_truth_id.into(),
-                            Angle::from_degrees(ire.latitude),
-                            Angle::from_degrees(ire.longitude),
-                            Length::from_meters(ire.altitude),
-                            Velocity::from_meters_per_second(ire.velocity_east),
-                            Velocity::from_meters_per_second(ire.velocity_north),
-                            LuminousIntensity::from_candelas(ire.intensity),
-                        )
-                    })
-                    .collect()
-            };
-
-            let consolidated_ground_station_config = cfg
-                .consolidated_ground_station_config()
-                .unwrap_or_else(default_consolidated_ground_station_config);
-
-            Self {
-                consolidated_ground_station_config,
-                ground_stations,
-                ir_events,
-                satellite_configs,
-            }
+            Config::load(cfg_path)
         } else {
             info!("Loading default nominal scenario");
-            Self {
-                consolidated_ground_station_config: default_consolidated_ground_station_config(),
-                ground_stations: all_known_ground_stations(),
-                ir_events: basic_scheduled_ir_events(),
-                satellite_configs,
-            }
+            Config::default()
+        };
+
+        // NOTE: the SATELLITE_IDS array is ordered to match what we expect from 42 exactly
+        let mut satellite_configs: HashMap<SpacecraftIndex, SatelliteConfig> = Default::default();
+        for (idx, sat) in SATELLITE_IDS.iter().enumerate() {
+            let sat_idx = idx as SpacecraftIndex;
+            // So that each satellite has slightly different initial conditions
+            let mut prng = Rand64::new((opts.config_prng_seed.unwrap_or(0) + sat_idx).into());
+            let sat_cfg = SatelliteConfig {
+                id: sat,
+                power_config: cfg
+                    .power_config(sat, &mut prng)
+                    .unwrap_or_else(|| PowerConfig::nominal(sat, Some(&mut prng))),
+                compute_config: cfg
+                    .compute_config(sat, &mut prng)
+                    .unwrap_or_else(|| ComputeConfig::nominal(sat, Some(&mut prng))),
+                comms_config: cfg
+                    .comms_config(sat, &mut prng)
+                    .unwrap_or_else(|| CommsConfig::nominal(sat, Some(&mut prng))),
+                vision_config: cfg
+                    .vision_config(sat, &mut prng)
+                    .unwrap_or_else(|| VisionConfig::nominal(sat, Some(&mut prng))),
+                imu_config: cfg
+                    .imu_config(sat, &mut prng)
+                    .unwrap_or_else(|| ImuConfig::nominal(sat, Some(&mut prng))),
+            };
+            satellite_configs.insert(sat_idx, sat_cfg);
+        }
+
+        let relays = cfg.relay_ground_station_configs();
+        let ground_stations = if relays.is_empty() {
+            all_known_ground_stations()
+        } else {
+            relays.into_iter().map(|rgs| (rgs.id, rgs)).collect()
+        };
+
+        let ir_events = if cfg.ir_events.is_empty() {
+            basic_scheduled_ir_events()
+        } else {
+            cfg.ir_events
+                .iter()
+                .cloned()
+                .map(|ire| {
+                    ScheduledIREvent::from_degrees_and_meters(
+                        Time::from_secs(ire.activate_at),
+                        ire.deactivate_at.map(Time::from_secs),
+                        ire.ground_truth_id.into(),
+                        Angle::from_degrees(ire.latitude),
+                        Angle::from_degrees(ire.longitude),
+                        Length::from_meters(ire.altitude),
+                        Velocity::from_meters_per_second(ire.velocity_east),
+                        Velocity::from_meters_per_second(ire.velocity_north),
+                        LuminousIntensity::from_candelas(ire.intensity),
+                    )
+                })
+                .collect()
+        };
+
+        let consolidated_ground_station_config = cfg
+            .consolidated_ground_station_config()
+            .unwrap_or_else(default_consolidated_ground_station_config);
+
+        Self {
+            consolidated_ground_station_config,
+            ground_stations,
+            ir_events,
+            satellite_configs,
         }
     }
 }
