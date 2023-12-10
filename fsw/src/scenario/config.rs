@@ -11,6 +11,7 @@ use crate::{
 };
 use nav_types::WGS84;
 use oorandom::Rand64;
+use regex::Regex;
 use serde::Deserialize;
 use std::{collections::HashSet, fs, path::Path};
 
@@ -76,11 +77,12 @@ impl Config {
         }
 
         let mut ids = HashSet::new();
-        for sat in cfg.satellites.iter() {
-            let sat_idx = sat.sat_idx();
-            let sat_name = SATELLITE_IDS[sat_idx].name;
-            if !ids.insert(sat_idx) {
-                panic!("Duplicate configuration entry for satellite '{sat_name}'");
+        for sat_cfg in cfg.satellites.iter() {
+            if !SATELLITE_IDS.iter().any(|s| sat_cfg.matches_satellite(s)) {
+                panic!("Configuration entry for satellite (id='{:?}', name='{:?}', matches='{:?}') doesn't match any satellite",
+                sat_cfg.id,
+                sat_cfg.name,
+                sat_cfg.matches);
             }
         }
 
@@ -108,9 +110,7 @@ impl Config {
     }
 
     pub(crate) fn satellite(&self, id: &SatelliteId) -> Option<&Satellite> {
-        self.satellites
-            .iter()
-            .find(|s| s.id().satcat_id == id.satcat_id)
+        self.satellites.iter().find(|s| s.matches_satellite(id))
     }
 
     fn temperature_sensor(&self, name: &str) -> Option<&TemperatureSensor> {
@@ -597,7 +597,9 @@ impl Config {
 #[derive(Clone, PartialEq, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Satellite {
-    pub id: toml::Value,
+    pub id: Option<u32>,
+    pub name: Option<String>,
+    pub matches: Option<String>,
     pub enable_all_mutators: Option<bool>,
     pub apply_variance: Option<bool>,
     pub power: Option<String>,
@@ -608,27 +610,23 @@ pub struct Satellite {
 }
 
 impl Satellite {
-    fn sat_idx(&self) -> usize {
-        for (idx, sat) in SATELLITE_IDS.iter().enumerate() {
-            if let Some(s) = self.id.as_str() {
-                if s == sat.name {
-                    return idx;
-                }
-            } else if let Some(n) = self.id.as_integer() {
-                if n as u64 == u64::from(sat.satcat_id) {
-                    return idx;
-                }
+    fn matches_satellite(&self, sat_id: &SatelliteId) -> bool {
+        if let Some(id) = self.id {
+            (id as u64) == u64::from(sat_id.satcat_id)
+        } else if let Some(name) = self.name.as_ref() {
+            name.trim() == sat_id.name
+        } else if let Some(regex) = self.matches.as_ref() {
+            let re = Regex::new(regex)
+                .expect("Satellite configuration contains an invalid 'matches' regex");
+            if re.is_match(sat_id.name) {
+                true
             } else {
-                panic!(
-                    "Invalid satellite configuration, id must be either a string name or satcat ID"
-                );
+                let id_str = u64::from(sat_id.satcat_id).to_string();
+                re.is_match(&id_str)
             }
+        } else {
+            panic!("Satellite configurations must contain one of the fields 'id', 'name', or 'matches'");
         }
-        panic!("Invalid satellite configuration, id must be a value string name or satcat ID");
-    }
-
-    fn id(&self) -> &SatelliteId {
-        &SATELLITE_IDS[self.sat_idx()]
     }
 }
 
@@ -1014,7 +1012,7 @@ pub struct IREvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::satellite::SatCatId;
+    use crate::satellite::{SatCatId, SATELLITE_IDS};
     use approx::assert_relative_eq;
     use indoc::indoc;
 
@@ -1122,7 +1120,7 @@ mod tests {
             watchdog-out-of-sync = 'm0'
 
         [[satellite]]
-        id = 'GALAXY-1'
+        name = 'GALAXY-1'
         enable-all-mutators = true
         apply-variance = true
         power = 'power0'
@@ -1134,6 +1132,11 @@ mod tests {
         [[satellite]]
         id = 46114
         power = 'power1'
+
+        [[satellite]]
+        # Will match CLUSTER-1/2/3 and GOES-5
+        matches = '^(CLUSTER\-.+|26871)$'
+        enable-all-mutators = true
 
         [consolidated-ground-station]
         enable-all-mutators = false
@@ -1184,7 +1187,7 @@ mod tests {
         assert_eq!(cfg.temperature_sensors.len(), 2);
         assert_eq!(cfg.point_failures.len(), 2);
         assert_eq!(cfg.mutators.len(), 1);
-        assert_eq!(cfg.satellites.len(), 2);
+        assert_eq!(cfg.satellites.len(), 3);
         assert_eq!(cfg.power_subsystems.len(), 2);
         assert_eq!(cfg.compute_subsystems.len(), 1);
         assert_eq!(cfg.comms_subsystems.len(), 1);
@@ -1196,7 +1199,8 @@ mod tests {
         let mut prng = Rand64::new(0);
         let id = &SATELLITE_IDS[0];
         assert_eq!(id.satcat_id, SatCatId::from(45026));
-        assert_eq!(cfg.satellites[0].id().satcat_id, id.satcat_id);
+        assert!(cfg.satellites[0].matches_satellite(id));
+        assert!(!cfg.satellites[1].matches_satellite(id));
         assert_eq!(cfg.satellites[0].enable_all_mutators, Some(true));
         assert_eq!(cfg.satellites[0].apply_variance, Some(true));
         assert!(cfg.satellite(id).is_some());
@@ -1206,8 +1210,23 @@ mod tests {
         assert!(cfg.vision_config(id, &mut prng).is_some());
         assert!(cfg.imu_config(id, &mut prng).is_some());
 
-        assert_eq!(cfg.satellites[1].id().satcat_id, SatCatId::from(46114));
-        assert!(cfg.power_config(&SATELLITE_IDS[1], &mut prng).is_some());
+        let id = &SATELLITE_IDS[1];
+        assert!(!cfg.satellites[0].matches_satellite(id));
+        assert!(cfg.satellites[1].matches_satellite(id));
+        assert!(cfg.power_config(id, &mut prng).is_some());
+
+        for sat in SATELLITE_IDS.iter() {
+            let n = sat.name;
+            if n == "CLUSTER-1"
+                || n == "CLUSTER-2"
+                || n == "CLUSTER-3"
+                || u64::from(sat.satcat_id) == 26871
+            {
+                assert!(cfg.satellites[2].matches_satellite(sat));
+            } else {
+                assert!(!cfg.satellites[2].matches_satellite(sat));
+            }
+        }
     }
 
     #[test]

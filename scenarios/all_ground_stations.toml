@@ -1,6 +1,9 @@
 name = 'A scenario with all of the default ground stations and randomly generated IR events'
 
-# Satellites will use the default configuration
+# Satellites will use the default configuration, with mutators enabled
+[[satellite]]
+matches = '.*'
+enable-all-mutators = true
 
 [consolidated-ground-station]
 rack-count = 3

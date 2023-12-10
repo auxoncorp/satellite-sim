@@ -46,7 +46,7 @@ temperature-sensor = 'temp-sensor'
 # while the other satellites will use the default configuration.
 # Note that the number of satellites is fixed, regardless of configuration.
 [[satellite]]
-id = 'GALAXY-1'
+name = 'GALAXY-1'
 # The IMU and power subsystems will use the provided configurations
 # while the other subsystems will use the default
 power = 'power'

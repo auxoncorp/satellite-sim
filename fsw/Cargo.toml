@@ -40,6 +40,7 @@ serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
 oorandom = "11.1"
 url = { version = "2.1", features = ["serde"] }
+regex = "1.10"
 
 # TODO - unfork after nalgebra 0.32 makes it in
 #kiss3d = "0.35"
