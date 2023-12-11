@@ -100,8 +100,6 @@ impl IrEventGenerator {
                 LuminousIntensity::as_candelas,
             );
 
-            println!("{}", activate_at.as_secs());
-
             events.push(ScheduledIREvent::from_degrees_and_meters(
                 activate_at,
                 deactivate_at,
