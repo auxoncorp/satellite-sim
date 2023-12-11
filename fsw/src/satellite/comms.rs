@@ -274,6 +274,7 @@ impl CommsSubsystem {
             self.gps_offline_rtc_drift_ratio = Ratio::from_f64(0.0);
         }
 
+        self.rtc_degraded_drift_ratio = Ratio::from_f64(0.0);
         if let Some(pf) = self.rtc_degraded.as_mut() {
             let fault_active = pf.update(dt, self.temp_sensor.temperature());
             if fault_active {
@@ -297,6 +298,7 @@ impl CommsSubsystem {
         warn!(?rel_time, "Comms hard reset");
 
         self.enable_time_sync = true;
+        self.rtc_degraded_drift_ratio = Ratio::from_f64(0.0);
 
         // Clear error register
         self.error_register.out_of_sync = false;
@@ -458,7 +460,7 @@ impl CommsConfig {
         let mut variance = |scale| {
             with_variance
                 .as_mut()
-                .map(|prng| prng.rand_float() * scale)
+                .map(|prng| ((prng.rand_float() * 2.0) - 1.0) * scale)
                 .unwrap_or(0.0)
         };
 
@@ -469,8 +471,8 @@ impl CommsConfig {
                         initial: Temperature::from_degrees_celsius(variance(5.0)),
                         min: Temperature::from_degrees_celsius(-50.0),
                         max: Temperature::from_degrees_celsius(50.0),
-                        day: TemperatureInterval::from_degrees_celsius(1.0),
-                        night: TemperatureInterval::from_degrees_celsius(1.0),
+                        day: TemperatureInterval::from_degrees_celsius(0.01),
+                        night: TemperatureInterval::from_degrees_celsius(0.01),
                     },
                 ),
             },

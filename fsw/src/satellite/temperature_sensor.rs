@@ -37,7 +37,7 @@ pub enum TemperatureSensorModel {
     Exponential(TemperatureSensorExponentialModelParams),
 }
 
-const RAND_INTERVAL_DAY_NIGHT_BIAS: f64 = 0.2;
+const RAND_INTERVAL_DAY_NIGHT_BIAS: f64 = 0.999;
 
 pub type TemperatureSensorRandomIntervalModelParams =
     TemperatureSensorModelParams<TemperatureInterval>;

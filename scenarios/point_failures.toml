@@ -43,6 +43,11 @@ name = 'pf7'
 threshold = '>= 40.0'
 hold-period = 1.0
 
+[[point-failure]]
+name = 'pf8'
+threshold = '>= 40.0'
+hold-period = 1.0
+
 [[power-subsystem]]
 name = 'power'
     [power-subsystem.fault]
@@ -52,6 +57,8 @@ name = 'power'
 
 [[compute-subsystem]]
 name = 'compute'
+    [compute-subsystem.fault]
+    telemetry-timer-degraded = 'pf8'
 
 [[comms-subsystem]]
 name = 'comms'
@@ -73,7 +80,7 @@ name = 'imu'
     data-inconsistency = 'pf7'
 
 [[satellite]]
-matches = '.*'
+matches = 'GALAXY-1'
 power = 'power'
 compute = 'compute'
 comms = 'comms'

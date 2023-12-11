@@ -1,4 +1,4 @@
-// cargo run --bin temperature-profile --release -- --satcat-id 37481 --sensor focus-cam --duration 345600 --dt 1.0 --toggle-sun-vis-every 43200 /tmp/temp_data.txt
+// cargo run --bin temperature-profile --release -- --satcat-id 45026 --sensor focus-cam --duration 345600 --dt 1.0 --toggle-sun-vis-every 43200 /tmp/temp_data.txt
 
 use clap::Parser;
 use std::io::prelude::*;

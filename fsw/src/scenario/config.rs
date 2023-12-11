@@ -282,6 +282,10 @@ impl Config {
                     .as_ref()
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
                     .unwrap_or(enable_all_mutators),
+                telemetry_timer_degraded: f
+                    .telemetry_timer_degraded
+                    .as_ref()
+                    .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
             })
             .unwrap_or_default();
 
@@ -720,6 +724,7 @@ pub struct ComputeFields {
 #[serde(default, rename_all = "kebab-case")]
 pub struct ComputeFault {
     pub watchdog_out_of_sync: Option<String>,
+    pub telemetry_timer_degraded: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize)]
@@ -1118,6 +1123,7 @@ mod tests {
         temperature-sensor = 'ts1'
             [compute-subsystem.fault]
             watchdog-out-of-sync = 'm0'
+            telemetry-timer-degraded = 'pf0'
 
         [[comms-subsystem]]
         name = 'comms0'

@@ -289,7 +289,7 @@ impl PowerConfig {
         let mut variance = |scale| {
             with_variance
                 .as_mut()
-                .map(|prng| prng.rand_float() * scale)
+                .map(|prng| ((prng.rand_float() * 2.0) - 1.0) * scale)
                 .unwrap_or(0.0)
         };
 
@@ -314,8 +314,8 @@ impl PowerConfig {
                         initial: Temperature::from_degrees_celsius(variance(5.0)),
                         min: Temperature::from_degrees_celsius(-50.0),
                         max: Temperature::from_degrees_celsius(50.0),
-                        day: TemperatureInterval::from_degrees_celsius(1.0),
-                        night: TemperatureInterval::from_degrees_celsius(1.0),
+                        day: TemperatureInterval::from_degrees_celsius(0.01),
+                        night: TemperatureInterval::from_degrees_celsius(0.01),
                     },
                 ),
             },

@@ -1,4 +1,4 @@
-// cargo run --bin power-profile --release -- --satcat-id 37481 --duration 345600 --dt 1.0 --toggle-sun-vis-every 43200 /tmp/power_data.txt
+// cargo run --bin power-profile --release -- --satcat-id 45026 --duration 345600 --dt 1.0 --toggle-sun-vis-every 43200 /tmp/power_data.txt
 
 use clap::Parser;
 use std::fs::File;

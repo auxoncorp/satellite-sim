@@ -7,6 +7,7 @@ use crate::{
     channel::{Receiver, Sender},
     modality::{AttrsBuilder, MODALITY},
     mutator::{watchdog_out_of_sync_descriptor, GenericBooleanMutator},
+    point_failure::{PointFailure, PointFailureConfig},
     satellite::{
         SatelliteEnvironment, SatelliteId, SatelliteSharedState, TemperatureSensorModel,
         TemperatureSensorRandomIntervalModelParams,
@@ -15,7 +16,7 @@ use crate::{
         Detections, GroundToSatMessage, SatErrorFlag, SatToGroundMessage, SatToGroundMessageBody,
         SatelliteTelemetry,
     },
-    units::{Temperature, TemperatureInterval, Time, Timestamp},
+    units::{Ratio, Temperature, TemperatureInterval, Time, Timestamp},
     SimulationComponent,
 };
 
@@ -34,8 +35,10 @@ pub struct ComputeSubsystem {
     last_sequence_number: u64,
     telemetry_state: TelemetryState,
     error_register: ComputeErrorRegister,
+    telemetry_timer_degraded_drift_ratio: Ratio,
 
     temp_sensor: TemperatureSensor,
+    telemetry_timer_degraded: Option<PointFailure<Temperature>>,
     watchdog_out_of_sync: Option<GenericBooleanMutator>,
 
     timeline: TimelineId,
@@ -54,7 +57,7 @@ impl ComputeConfig {
         let mut variance = |scale| {
             with_variance
                 .as_mut()
-                .map(|prng| prng.rand_float() * scale)
+                .map(|prng| ((prng.rand_float() * 2.0) - 1.0) * scale)
                 .unwrap_or(0.0)
         };
 
@@ -67,8 +70,8 @@ impl ComputeConfig {
                         initial: Temperature::from_degrees_celsius(variance(5.0)),
                         min: Temperature::from_degrees_celsius(-50.0),
                         max: Temperature::from_degrees_celsius(50.0),
-                        day: TemperatureInterval::from_degrees_celsius(1.0),
-                        night: TemperatureInterval::from_degrees_celsius(1.0),
+                        day: TemperatureInterval::from_degrees_celsius(0.01),
+                        night: TemperatureInterval::from_degrees_celsius(0.01),
                     },
                 ),
             },
@@ -89,6 +92,12 @@ pub struct ComputeFaultConfig {
     /// Enable the data watchdog execution out-of-sync mutator.
     /// See sections 1.3.4.2 of the requirements doc.
     pub watchdog_out_of_sync: bool,
+
+    /// Parameters for the telemetry timer degraded point failure.
+    /// This point failure is motivated by temperature.
+    /// The telemetry rate is decreased/scaled by the normalized
+    /// temperature when active.
+    pub telemetry_timer_degraded: Option<PointFailureConfig<Temperature>>,
 }
 
 pub struct ComputeChannels {
@@ -143,6 +152,17 @@ impl ComputeSubsystem {
     pub fn new(config: ComputeConfig, channels: ComputeChannels) -> Self {
         let timeline = TimelineId::allocate();
         let temp_sensor = TemperatureSensor::new(config.temperature_sensor_config);
+        let telemetry_timer_degraded = config
+            .fault_config
+            .telemetry_timer_degraded
+            .as_ref()
+            .map(|pf_config| PointFailure::new(pf_config.clone()));
+
+        if telemetry_timer_degraded.is_some() {
+            if let TemperatureSensorModel::Linear(_) = config.temperature_sensor_config.model {
+                panic!("telemetry_timer_degraded requires a non-linear temperature sensor model");
+            }
+        }
         Self {
             config,
             channels,
@@ -153,8 +173,10 @@ impl ComputeSubsystem {
                 collect_time: Timestamp::epoch(),
             },
             error_register: ComputeErrorRegister { out_of_sync: false },
+            telemetry_timer_degraded_drift_ratio: Ratio::from_f64(0.0),
 
             temp_sensor,
+            telemetry_timer_degraded,
             // Mutators are initialized in init_fault_models at sim-init time
             watchdog_out_of_sync: None,
 
@@ -163,6 +185,16 @@ impl ComputeSubsystem {
     }
 
     fn init_fault_models(&mut self, id: &SatelliteId) {
+        let base_ctx = [
+            ("satellite_name", id.name),
+            ("component_name", Self::COMPONENT_NAME),
+        ];
+
+        if let Some(pf) = self.telemetry_timer_degraded.as_mut() {
+            pf.set_context(base_ctx);
+            pf.add_context("name", "telemetry_timer_degraded");
+        }
+
         // Construct mutators at sim-init time so we have access to SatelliteId/env details
         // to qualify the mutator descriptors
         self.watchdog_out_of_sync =
@@ -179,7 +211,19 @@ impl ComputeSubsystem {
         }
     }
 
-    fn update_fault_models(&mut self) {
+    fn update_fault_models(&mut self, dt: Time) {
+        self.telemetry_timer_degraded_drift_ratio = Ratio::from_f64(0.0);
+        if let Some(pf) = self.telemetry_timer_degraded.as_mut() {
+            let fault_active = pf.update(dt, self.temp_sensor.temperature());
+            if fault_active {
+                // already checked config for non-constant temperature model
+                self.telemetry_timer_degraded_drift_ratio = self
+                    .temp_sensor
+                    .normalized_temperature()
+                    .unwrap_or_else(|| Ratio::from_f64(0.0));
+            }
+        }
+
         self.error_register.out_of_sync = self
             .watchdog_out_of_sync
             .as_ref()
@@ -193,7 +237,13 @@ impl ComputeSubsystem {
         // Clear error register
         self.error_register.out_of_sync = false;
 
+        // Reset point failures
+        if let Some(pf) = self.telemetry_timer_degraded.as_mut() {
+            pf.reset();
+        }
+
         // Reset state
+        self.telemetry_timer_degraded_drift_ratio = Ratio::from_f64(0.0);
         self.last_sequence_number = 1;
         self.telemetry_state = TelemetryState::Idle {
             collect_time: shared_state.rtc + self.config.telemetry_rate,
@@ -249,7 +299,7 @@ impl<'a> SimulationComponent<'a> for ComputeSubsystem {
 
         self.temp_sensor.step(dt, env, sat);
 
-        self.update_fault_models();
+        self.update_fault_models(dt);
 
         let mut power_res = self.channels.power_res_rx.recv();
         let mut comms_res = self.channels.comms_res_rx.recv();
@@ -291,10 +341,13 @@ impl<'a> SimulationComponent<'a> for ComputeSubsystem {
                         .try_send(VisionCommand::GetStatus);
                     let _ = self.channels.imu_cmd_tx.try_send(ImuCommand::GetStatus);
 
+                    let telem_rate = self.config.telemetry_rate
+                        + (self.config.telemetry_rate * self.telemetry_timer_degraded_drift_ratio);
+
                     self.telemetry_state = TelemetryState::Collecting {
                         pending_telemetry: Box::new(SatelliteTelemetry::new()),
                         timeout_send_time: sat.rtc + self.config.collect_timeout,
-                        next_collect_time: sat.rtc + self.config.telemetry_rate,
+                        next_collect_time: sat.rtc + telem_rate,
                     };
                 }
             }
