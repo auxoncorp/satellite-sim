@@ -5,6 +5,7 @@ pub mod external_mission_control;
 pub mod ground_station;
 pub mod ground_truth_ir_events;
 pub mod gui;
+pub mod ir_event_generator;
 pub mod modality;
 pub mod mutator;
 pub mod point_failure;

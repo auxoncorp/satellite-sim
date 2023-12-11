@@ -1,18 +1,66 @@
 use na::{Rotation3, Vector3};
-use nav_types::WGS84;
+use nav_types::{ECEF, WGS84};
 use std::net::TcpStream;
 use tracing::debug;
 use types42::prelude::WorldKind;
 
 use crate::{
     external_mission_control::{GroundTruthIREvent, Message},
-    scenario::ScheduledIREvent,
-    system::{CameraSourceId, SystemEnvironment, SystemSharedState},
-    units::Time,
+    system::{CameraSourceId, IREvent, SystemEnvironment, SystemSharedState},
+    units::{Angle, Length, LuminousIntensity, Time, Velocity},
     SimulationComponent,
 };
 
 pub type GroundTruthIrEvents = Vec<ScheduledIREvent>;
+
+#[derive(Debug, Clone)]
+pub struct ScheduledIREvent {
+    /// Relative time to activate the event
+    pub activate_at: Time,
+    /// Relative time to deactivate the event
+    pub deactivat_at: Option<Time>,
+    pub event: IREvent,
+}
+
+impl ScheduledIREvent {
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_degrees_and_meters(
+        activate_at: Time,
+        deactivate_at: Option<Time>,
+        ground_truth_id: i64,
+        latitude: Angle,
+        longitude: Angle,
+        altitude: Length,
+        velocity_east: Velocity,
+        velocity_north: Velocity,
+        intensity: LuminousIntensity,
+    ) -> Self {
+        if let Some(t1) = deactivate_at.as_ref() {
+            debug_assert!(t1 > &activate_at);
+        }
+        let pos_wgs = WGS84::from_degrees_and_meters(
+            latitude.as_degrees(),
+            longitude.as_degrees(),
+            altitude.as_meters(),
+        );
+        let pos_ecef = ECEF::from(pos_wgs);
+
+        Self {
+            activate_at,
+            deactivat_at: deactivate_at,
+            event: IREvent {
+                ground_truth_id,
+                source_id: CameraSourceId::Unassigned,
+                location: pos_wgs.into(),
+                position: Vector3::new(pos_ecef.x(), pos_ecef.y(), pos_ecef.z()),
+                velocity: Vector3::zeros(), // Gets computed at runtime
+                velocity_east: velocity_east.as_meters_per_second(),
+                velocity_north: velocity_north.as_meters_per_second(),
+                intensity,
+            },
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct GroundTruthIrEventsManagerConfig {

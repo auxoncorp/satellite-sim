@@ -47,6 +47,12 @@ struct Opts {
     #[arg(long)]
     enable_all_mutators: bool,
 
+    /// Randomly generate N number of IR events.
+    ///
+    /// Overrides any provided configuration file.
+    #[arg(long)]
+    random_ir_events: Option<usize>,
+
     /// The optional address:port of the mission control TCP server to connect to
     #[arg(long, requires = "mc")]
     mission_control: Option<String>,
@@ -129,6 +135,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ScenarioOptions {
             enable_all_mutators: opts.enable_all_mutators,
             config_prng_seed: opts.config_prng_seed,
+            random_ir_events: opts.random_ir_events,
         },
         opts.scenario,
     );

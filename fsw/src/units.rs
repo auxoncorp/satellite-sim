@@ -335,6 +335,22 @@ impl Angle {
     }
 }
 
+impl Add<Angle> for Angle {
+    type Output = Angle;
+
+    fn add(self, rhs: Angle) -> Self::Output {
+        Angle::from_degrees(self.as_degrees() + rhs.as_degrees())
+    }
+}
+
+impl Sub<Angle> for Angle {
+    type Output = Angle;
+
+    fn sub(self, rhs: Angle) -> Self::Output {
+        Angle::from_degrees(self.as_degrees() - rhs.as_degrees())
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, PartialOrd)]
 pub struct ElectricPotential {
     volts: f64,
