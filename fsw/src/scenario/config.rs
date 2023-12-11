@@ -84,6 +84,52 @@ impl Config {
                 sat_cfg.name,
                 sat_cfg.matches);
             }
+
+            if let Some(n) = sat_cfg.power.as_ref() {
+                assert!(
+                    cfg.power_subsystems.iter().any(|p| &p.name == n),
+                    "Configuration entry for satellite (id='{:?}', name='{:?}', matches='{:?}') has an invalid power configuration",
+                    sat_cfg.id,
+                    sat_cfg.name,
+                    sat_cfg.matches,
+                );
+            }
+            if let Some(n) = sat_cfg.compute.as_ref() {
+                assert!(
+                    cfg.compute_subsystems.iter().any(|p| &p.name == n),
+                    "Configuration entry for satellite (id='{:?}', name='{:?}', matches='{:?}') has an invalid compute configuration",
+                    sat_cfg.id,
+                    sat_cfg.name,
+                    sat_cfg.matches,
+                );
+            }
+            if let Some(n) = sat_cfg.comms.as_ref() {
+                assert!(
+                    cfg.comms_subsystems.iter().any(|p| &p.name == n),
+                    "Configuration entry for satellite (id='{:?}', name='{:?}', matches='{:?}') has an invalid comms configuration",
+                    sat_cfg.id,
+                    sat_cfg.name,
+                    sat_cfg.matches,
+                );
+            }
+            if let Some(n) = sat_cfg.vision.as_ref() {
+                assert!(
+                    cfg.vision_subsystems.iter().any(|p| &p.name == n),
+                    "Configuration entry for satellite (id='{:?}', name='{:?}', matches='{:?}') has an invalid vision configuration",
+                    sat_cfg.id,
+                    sat_cfg.name,
+                    sat_cfg.matches,
+                );
+            }
+            if let Some(n) = sat_cfg.imu.as_ref() {
+                assert!(
+                    cfg.imu_subsystems.iter().any(|p| &p.name == n),
+                    "Configuration entry for satellite (id='{:?}', name='{:?}', matches='{:?}') has an invalid imu configuration",
+                    sat_cfg.id,
+                    sat_cfg.name,
+                    sat_cfg.matches,
+                );
+            }
         }
 
         ids.clear();
@@ -376,12 +422,6 @@ impl Config {
                     .focus_camera_gimbal
                     .as_ref()
                     .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
-                focus_camera_constant_temperature_after_reset: f
-                    .focus_camera_constant_temperature_after_reset
-                    .map(Temperature::from_degrees_celsius),
-                scanner_camera_constant_temperature_after_reset: f
-                    .scanner_camera_constant_temperature_after_reset
-                    .map(Temperature::from_degrees_celsius),
                 watchdog_out_of_sync: f
                     .watchdog_out_of_sync
                     .as_ref()
@@ -736,8 +776,6 @@ pub struct VisionFault {
     pub scanner_camera_offline: Option<String>,
     pub focus_camera_offline: Option<String>,
     pub focus_camera_gimbal: Option<String>,
-    pub focus_camera_constant_temperature_after_reset: Option<f64>,
-    pub scanner_camera_constant_temperature_after_reset: Option<f64>,
     pub watchdog_out_of_sync: Option<String>,
     pub watchdog_out_of_sync_recurring: Option<bool>,
 }

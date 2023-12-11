@@ -1,11 +1,11 @@
-// TODO
-// check each example config loads
-// check files in dir for newly added but not tested
-
 use fsw_lib::scenario::config::Config;
 use std::{collections::HashSet, fs, path::Path};
 
-const CONFIG_FILES: &[&str] = &["all_ground_stations.toml", "example.toml"];
+const CONFIG_FILES: &[&str] = &[
+    "all_ground_stations.toml",
+    "example.toml",
+    "point_failures.toml",
+];
 
 #[test]
 fn example_scenario_config_file_list_matches_expected() {

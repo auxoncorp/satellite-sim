@@ -1,0 +1,81 @@
+name = 'A scenario with all point failures and mutators enabled'
+enable-all-mutators = true
+# Adds random variance to the initial conditions
+apply-variance = true
+
+[[point-failure]]
+name = 'pf0'
+threshold = '>= 35.0'
+hold-period = 1.0
+
+[[point-failure]]
+name = 'pf1'
+threshold = '>= 30.0'
+hold-period = 1.0
+
+[[point-failure]]
+name = 'pf2'
+threshold = '>= 30.0'
+hold-period = 1.0
+
+[[point-failure]]
+name = 'pf3'
+threshold = '>= 35.0'
+hold-period = 1.0
+
+[[point-failure]]
+name = 'pf4'
+threshold = '>= 45.0'
+hold-period = 1.0
+
+[[point-failure]]
+name = 'pf5'
+threshold = '>= 40.0'
+hold-period = 1.0
+
+[[point-failure]]
+name = 'pf6'
+threshold = '>= 30.0'
+hold-period = 1.0
+
+[[point-failure]]
+name = 'pf7'
+threshold = '>= 40.0'
+hold-period = 1.0
+
+[[power-subsystem]]
+name = 'power'
+    [power-subsystem.fault]
+        [power-subsystem.fault.battery-degraded]
+        name = 'pf0'
+        value = 0.00002776
+
+[[compute-subsystem]]
+name = 'compute'
+
+[[comms-subsystem]]
+name = 'comms'
+    [comms-subsystem.fault]
+    rtc-degraded = 'pf1'
+
+[[vision-subsystem]]
+name = 'vision'
+    [vision-subsystem.fault]
+    active-cooling = 'pf2'
+    scanner-camera-offline = 'pf3'
+    focus-camera-offline = 'pf4'
+    focus-camera-gimbal = 'pf5'
+
+[[imu-subsystem]]
+name = 'imu'
+    [imu-subsystem.fault]
+    degraded-state = 'pf6'
+    data-inconsistency = 'pf7'
+
+[[satellite]]
+matches = '.*'
+power = 'power'
+compute = 'compute'
+comms = 'comms'
+vision = 'vision'
+imu = 'imu'

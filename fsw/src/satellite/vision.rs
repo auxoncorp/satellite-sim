@@ -104,18 +104,6 @@ pub struct VisionFaultConfig {
     /// This point failure is motivated by the focus camera temperature.
     pub focus_camera_gimbal: Option<PointFailureConfig<Temperature>>,
 
-    /// Switch the focus camera temperature sensor model to constant after
-    /// a hard reset occurs.
-    /// This can be used to prevent the temperature-motivated
-    /// point failures from recurring.
-    pub focus_camera_constant_temperature_after_reset: Option<Temperature>,
-
-    /// Switch the scanner camera temperature sensor model to constant after
-    /// a hard reset occurs.
-    /// This can be used to prevent the temperature-motivated
-    /// point failures from recurring.
-    pub scanner_camera_constant_temperature_after_reset: Option<Temperature>,
-
     /// Enable the data watchdog execution out-of-sync mutator.
     /// See sections 1.3.4.2 of the requirements doc.
     pub watchdog_out_of_sync: bool,
@@ -142,8 +130,8 @@ impl VisionConfig {
                 model: TemperatureSensorModel::RandomInterval(
                     TemperatureSensorRandomIntervalModelParams {
                         initial: Temperature::from_degrees_celsius(variance(5.0)),
-                        min: Temperature::from_degrees_celsius(-40.0),
-                        max: Temperature::from_degrees_celsius(40.0),
+                        min: Temperature::from_degrees_celsius(-50.0),
+                        max: Temperature::from_degrees_celsius(50.0),
                         day: TemperatureInterval::from_degrees_celsius(1.0),
                         night: TemperatureInterval::from_degrees_celsius(1.0),
                     },
@@ -410,31 +398,11 @@ impl VisionSubsystem {
             MODALITY.clear_mutation(m);
         }
 
-        if let Some(constant_temperature_after_reset) = self
-            .config
-            .fault_config
-            .focus_camera_constant_temperature_after_reset
-        {
-            // Use a constant temperature model
-            self.focus_cam_temp_sensor
-                .convert_to_constant_model(constant_temperature_after_reset);
-        } else {
-            // Otherwise reset to initial temperature in the original model
-            self.focus_cam_temp_sensor.reset();
-        }
+        // Reset to initial temperature
+        self.focus_cam_temp_sensor.reset();
 
-        if let Some(constant_temperature_after_reset) = self
-            .config
-            .fault_config
-            .scanner_camera_constant_temperature_after_reset
-        {
-            // Use a constant temperature model
-            self.scanner_cam_temp_sensor
-                .convert_to_constant_model(constant_temperature_after_reset);
-        } else {
-            // Otherwise reset to initial temperature in the original model
-            self.scanner_cam_temp_sensor.reset();
-        }
+        // Reset to initial temperature
+        self.scanner_cam_temp_sensor.reset();
 
         // Drop message buffers
         self.event_tx.clear();
