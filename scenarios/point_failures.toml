@@ -86,3 +86,16 @@ compute = 'compute'
 comms = 'comms'
 vision = 'vision'
 imu = 'imu'
+
+[ir-event-generator]
+prng-seed = 0
+num-events = 15
+initial-start-time = 0.0
+max-time-between-activations = 300.0
+max-active-duration = 3600.0
+latitude-range = '-60.0..=60.0'
+longitude-range = '-140.0..=140.0'
+altitude-range = '-100000.0..=1500000.0'
+velocity-east-range = '-60000.0..=6000.0'
+velocity-north-range = '-6000.0..=6000.0'
+intensity-range = '1000.0..=1000000.0'

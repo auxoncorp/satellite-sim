@@ -12,7 +12,7 @@ use crate::{
         VelocityAnalysisConfig,
     },
     ground_truth_ir_events::ScheduledIREvent,
-    ir_event_generator::IrEventGenerator,
+    ir_event_generator::IREventGenerator,
     satellite::{
         CommsConfig, ComputeConfig, ImuConfig, PowerConfig, SatelliteConfig, VisionConfig,
         SATELLITE_IDS,
@@ -93,13 +93,15 @@ impl Scenario {
         };
 
         let ir_events = if let Some(num_events) = opts.random_ir_events {
-            let gen = IrEventGenerator {
+            let gen = IREventGenerator {
                 num_events,
                 ..Default::default()
             };
             gen.generate()
+        } else if let Some(gen) = cfg.ir_event_generator() {
+            gen.generate()
         } else if cfg.ir_events.is_empty() {
-            IrEventGenerator::default().generate()
+            IREventGenerator::default().generate()
         } else {
             cfg.ir_events
                 .iter()

@@ -1,5 +1,5 @@
 use crate::{
-    ground_station, point_failure,
+    ground_station, ir_event_generator, point_failure,
     satellite::{
         comms, compute, imu, power, temperature_sensor, vision, SatelliteId, SATELLITE_IDS,
     },
@@ -13,7 +13,7 @@ use nav_types::WGS84;
 use oorandom::Rand64;
 use regex::Regex;
 use serde::Deserialize;
-use std::{collections::HashSet, fs, path::Path};
+use std::{collections::HashSet, fs, path::Path, str::FromStr};
 
 #[derive(Clone, PartialEq, Debug, Default, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
@@ -42,6 +42,8 @@ pub struct Config {
     pub consolidated_ground_station: Option<ConsolidatedGroundStation>,
     #[serde(alias = "relay-ground-station")]
     pub relay_ground_stations: Vec<RelayGroundStation>,
+    #[serde(alias = "ir-event-generator")]
+    pub ir_event_generator: Option<IREventGenerator>,
     #[serde(alias = "ir-event")]
     pub ir_events: Vec<IREvent>,
 }
@@ -140,6 +142,12 @@ impl Config {
                     rgs.name
                 );
             }
+        }
+
+        if cfg.ir_event_generator.is_some() && !cfg.ir_events.is_empty() {
+            panic!(
+                "Configuration files cannot use both an IR event generator and define IR events"
+            );
         }
 
         ids.clear();
@@ -636,6 +644,30 @@ impl Config {
             }
         })
     }
+
+    pub(crate) fn ir_event_generator(&self) -> Option<ir_event_generator::IREventGenerator> {
+        self.ir_event_generator
+            .clone()
+            .map(|irg| ir_event_generator::IREventGenerator {
+                prng_seed: irg.prng_seed,
+                num_events: irg.num_events as _,
+                initial_start_time: Time::from_secs(irg.initial_start_time),
+                max_time_between_activations: Time::from_secs(irg.max_time_between_activations),
+                max_active_duration: irg.max_active_duration.map(Time::from_secs),
+                latitude_range: irg.latitude_range.as_unit(Angle::from_degrees),
+                longitude_range: irg.longitude_range.as_unit(Angle::from_degrees),
+                altitude_range: irg.altitude_range.as_unit(Length::from_meters),
+                velocity_east_range: irg
+                    .velocity_east_range
+                    .as_unit(Velocity::from_meters_per_second),
+                velocity_north_range: irg
+                    .velocity_north_range
+                    .as_unit(Velocity::from_meters_per_second),
+                intensity_range: irg
+                    .intensity_range
+                    .as_unit(LuminousIntensity::from_candelas),
+            })
+    }
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize)]
@@ -1052,6 +1084,71 @@ pub struct IREvent {
     pub intensity: f64,
 }
 
+#[derive(Clone, PartialEq, PartialOrd, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct IREventGenerator {
+    pub prng_seed: u64,
+    pub num_events: u32,
+
+    pub initial_start_time: f64,
+    pub max_time_between_activations: f64,
+    pub max_active_duration: Option<f64>,
+
+    #[serde(deserialize_with = "deserialize_range")]
+    pub latitude_range: RangeInclusiveF64,
+    #[serde(deserialize_with = "deserialize_range")]
+    pub longitude_range: RangeInclusiveF64,
+    #[serde(deserialize_with = "deserialize_range")]
+    pub altitude_range: RangeInclusiveF64,
+    #[serde(deserialize_with = "deserialize_range")]
+    pub velocity_east_range: RangeInclusiveF64,
+    #[serde(deserialize_with = "deserialize_range")]
+    pub velocity_north_range: RangeInclusiveF64,
+    #[serde(deserialize_with = "deserialize_range")]
+    pub intensity_range: RangeInclusiveF64,
+}
+
+#[derive(Clone, PartialEq, PartialOrd, Debug)]
+pub struct RangeInclusiveF64 {
+    pub start: f64,
+    pub end: f64,
+}
+
+impl RangeInclusiveF64 {
+    fn as_unit<F, T>(&self, f: F) -> std::ops::RangeInclusive<T>
+    where
+        F: Fn(f64) -> T,
+    {
+        std::ops::RangeInclusive::new(f(self.start), f(self.end))
+    }
+}
+
+impl FromStr for RangeInclusiveF64 {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let tokens: Vec<&str> = s.trim().split("..=").collect();
+        if tokens.len() != 2 || !s.contains("..=") {
+            return Err(
+                "Invalid IR event generator config range field, use inclusive range syntax 'start..=end'"
+                    .to_owned(),
+            );
+        }
+        let start = tokens[0].parse::<f64>().unwrap();
+        let end = tokens[1].parse::<f64>().unwrap();
+        assert!(start <= end, "Invalid IR event generator config range field, start must be less than or equal to end");
+        Ok(RangeInclusiveF64 { start, end })
+    }
+}
+
+fn deserialize_range<'de, D>(deserializer: D) -> Result<RangeInclusiveF64, D::Error>
+where
+    D: serde::de::Deserializer<'de>,
+{
+    let buf = String::deserialize(deserializer)?;
+    RangeInclusiveF64::from_str(&buf).map_err(serde::de::Error::custom)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1172,7 +1269,7 @@ mod tests {
         comms = 'comms0'
         vision = 'vision0'
         imu = 'imu0'
-        
+
         [[satellite]]
         id = 46114
         power = 'power1'
@@ -1387,5 +1484,51 @@ mod tests {
         } else {
             panic!();
         }
+    }
+
+    #[test]
+    fn ir_event_gen() {
+        const TOML: &str = indoc! {r#"
+            name = 'just events'
+
+            [ir-event-generator]
+            prng-seed = 2
+            num-events = 12
+            initial-start-time = 1.1
+            max-time-between-activations = 2.2
+            max-active-duration = 3.3
+            latitude-range = '-10.0..=10.0'
+            longitude-range = '-20.0..=20.0'
+            altitude-range = '-30.0..=30.0'
+            velocity-east-range = '-40.0..=40.0'
+            velocity-north-range = '-50.0..=50.0'
+            intensity-range = '100.0..=10000.0'
+        "#};
+        let cfg = Config::from_str_checked(TOML);
+        let g = cfg.ir_event_generator().unwrap();
+        assert_eq!(g.prng_seed, 2);
+        assert_eq!(g.num_events, 12);
+        assert_relative_eq!(g.initial_start_time.as_secs(), 1.1);
+        assert_relative_eq!(g.max_time_between_activations.as_secs(), 2.2);
+        assert_relative_eq!(g.max_active_duration.unwrap().as_secs(), 3.3);
+        assert_relative_eq!(g.latitude_range.start().as_degrees(), -10.0);
+        assert_relative_eq!(g.latitude_range.end().as_degrees(), 10.0);
+        assert_relative_eq!(g.longitude_range.start().as_degrees(), -20.0);
+        assert_relative_eq!(g.longitude_range.end().as_degrees(), 20.0);
+        assert_relative_eq!(g.altitude_range.start().as_meters(), -30.0);
+        assert_relative_eq!(g.altitude_range.end().as_meters(), 30.0);
+        assert_relative_eq!(g.velocity_east_range.start().as_meters_per_second(), -40.0);
+        assert_relative_eq!(g.velocity_east_range.end().as_meters_per_second(), 40.0);
+        assert_relative_eq!(g.velocity_north_range.start().as_meters_per_second(), -50.0);
+        assert_relative_eq!(g.velocity_north_range.end().as_meters_per_second(), 50.0);
+        assert_relative_eq!(g.intensity_range.start().as_candelas(), 100.0);
+        assert_relative_eq!(g.intensity_range.end().as_candelas(), 10000.0);
+    }
+
+    #[test]
+    fn inclusive_ranges() {
+        let r = RangeInclusiveF64::from_str("-10.0..=10.0").unwrap();
+        assert_relative_eq!(r.start, -10.0);
+        assert_relative_eq!(r.end, 10.0);
     }
 }

@@ -6,7 +6,7 @@ use oorandom::Rand64;
 use std::ops::RangeInclusive;
 
 #[derive(Debug)]
-pub struct IrEventGenerator {
+pub struct IREventGenerator {
     pub prng_seed: u64,
     pub num_events: usize,
 
@@ -22,9 +22,9 @@ pub struct IrEventGenerator {
     pub intensity_range: RangeInclusive<LuminousIntensity>,
 }
 
-impl Default for IrEventGenerator {
+impl Default for IREventGenerator {
     fn default() -> Self {
-        IrEventGenerator {
+        IREventGenerator {
             prng_seed: 0,
             num_events: 15,
             initial_start_time: Time::from_secs(0.0),
@@ -43,7 +43,7 @@ impl Default for IrEventGenerator {
     }
 }
 
-impl IrEventGenerator {
+impl IREventGenerator {
     pub fn generate(self) -> Vec<ScheduledIREvent> {
         let mut rand = Rand64::new(self.prng_seed.into());
         let mut id = GroundTruthIdGen::default();
