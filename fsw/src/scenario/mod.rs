@@ -64,23 +64,25 @@ impl Scenario {
             let sat_idx = idx as SpacecraftIndex;
             // So that each satellite has slightly different initial conditions
             let mut prng = Rand64::new((opts.config_prng_seed.unwrap_or(0) + sat_idx).into());
+            let apply_variance = cfg.apply_variance.unwrap_or(true);
+
             let sat_cfg = SatelliteConfig {
                 id: sat,
-                power_config: cfg
-                    .power_config(sat, &mut prng)
-                    .unwrap_or_else(|| PowerConfig::nominal(sat, Some(&mut prng))),
-                compute_config: cfg
-                    .compute_config(sat, &mut prng)
-                    .unwrap_or_else(|| ComputeConfig::nominal(sat, Some(&mut prng))),
-                comms_config: cfg
-                    .comms_config(sat, &mut prng)
-                    .unwrap_or_else(|| CommsConfig::nominal(sat, Some(&mut prng))),
-                vision_config: cfg
-                    .vision_config(sat, &mut prng)
-                    .unwrap_or_else(|| VisionConfig::nominal(sat, Some(&mut prng))),
-                imu_config: cfg
-                    .imu_config(sat, &mut prng)
-                    .unwrap_or_else(|| ImuConfig::nominal(sat, Some(&mut prng))),
+                power_config: cfg.power_config(sat, &mut prng).unwrap_or_else(|| {
+                    PowerConfig::nominal(sat, apply_variance.then_some(&mut prng))
+                }),
+                compute_config: cfg.compute_config(sat, &mut prng).unwrap_or_else(|| {
+                    ComputeConfig::nominal(sat, apply_variance.then_some(&mut prng))
+                }),
+                comms_config: cfg.comms_config(sat, &mut prng).unwrap_or_else(|| {
+                    CommsConfig::nominal(sat, apply_variance.then_some(&mut prng))
+                }),
+                vision_config: cfg.vision_config(sat, &mut prng).unwrap_or_else(|| {
+                    VisionConfig::nominal(sat, apply_variance.then_some(&mut prng))
+                }),
+                imu_config: cfg.imu_config(sat, &mut prng).unwrap_or_else(|| {
+                    ImuConfig::nominal(sat, apply_variance.then_some(&mut prng))
+                }),
             };
             satellite_configs.insert(sat_idx, sat_cfg);
         }
@@ -126,7 +128,7 @@ impl Scenario {
             .consolidated_ground_station_config()
             .unwrap_or_else(default_consolidated_ground_station_config);
 
-        if opts.enable_all_mutators {
+        if opts.enable_all_mutators || cfg.enable_all_mutators.unwrap_or(false) {
             for sat in satellite_configs.values_mut() {
                 sat.power_config.fault_config.solar_panel_degraded = true;
                 sat.power_config.fault_config.watchdog_out_of_sync = true;
