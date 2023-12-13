@@ -26,7 +26,7 @@ use crate::units::Timestamp;
 
 const MUTATION_PROTOCOL_PARENT_URL_ENV_VAR: &str = "MUTATION_PROTOCOL_PARENT_URL";
 const MUTATION_PROTOCOL_PARENT_URL_DEFAULT: &str = "modality-mutation://127.0.0.1:14192";
-const MUTATION_PLANE_POLL_TIMEOUT: Duration = Duration::from_secs(0);
+const MUTATION_PLANE_POLL_TIMEOUT_ENV_VAR: &str = "MODALITY_MUTATION_PLANE_TIMEOUT";
 
 /// Unless specified in the MODALITY_RUN_ID environment variable,
 /// the run-id is automatically generated from a monotonically
@@ -64,6 +64,7 @@ struct Inner {
     /// Single participant/connection for the entire simulation.
     mut_plane_pid: ParticipantId,
     mut_plane_conn: MutationParentConnection,
+    mut_plane_timeout: Duration,
 
     /// Pending mutation plane messages for mutators.
     /// Rather than dispatch to mutators directly, we delegate message
@@ -314,7 +315,7 @@ impl ModalityClient {
             if let Some(inner) = inner.borrow_mut().as_mut() {
                 let res = inner.rt.block_on(async {
                     tokio::time::timeout(
-                        MUTATION_PLANE_POLL_TIMEOUT,
+                        inner.mut_plane_timeout,
                         inner.mut_plane_conn.read_msg(),
                     )
                     .await
@@ -584,6 +585,11 @@ impl Inner {
         let mut_url = mutation_proto_parent_url().expect("Mutation protocol parent URL");
         let auth_token = AuthToken::load().expect("Auth token for mutation client");
         let allow_insecure_tls = true;
+        let mut_plane_timeout = Duration::from_millis(
+            std::env::var(MUTATION_PLANE_POLL_TIMEOUT_ENV_VAR)
+                .map(|t| t.parse().unwrap())
+                .unwrap_or(0),
+        );
         let mut mut_plane_conn = rt
             .block_on(MutationParentConnection::connect(
                 &mut_url,
@@ -627,6 +633,7 @@ impl Inner {
             run_id,
             mut_plane_pid,
             mut_plane_conn,
+            mut_plane_timeout,
             mutator_messages: Default::default(),
             active_mutations: Default::default(),
             rt,
