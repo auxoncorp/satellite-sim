@@ -1,7 +1,7 @@
 use modality_api::TimelineId;
 use modality_auth_token::AuthToken;
 use modality_ingest_client::protocol::InternedAttrKey;
-use modality_ingest_client::types::{AttrKey, AttrVal};
+use modality_ingest_client::types::{AttrKey, AttrVal, Uuid};
 use modality_ingest_client::{BoundTimelineState, IngestClient, IngestError};
 use modality_mutation_plane::{
     protocol::{LeafwardsMessage, RootwardsMessage, MUTATION_PROTOCOL_VERSION},
@@ -440,8 +440,9 @@ impl ModalityClient {
                     let mailbox = inner
                         .mutator_messages
                         .get_mut(&mutator_id)
-                        .expect("Mutator not registered");
-                    for msg in mailbox.drain(..) {
+                        .expect("Mutator not registered")
+                        .split_off(0);
+                    for msg in mailbox.into_iter() {
                         match msg {
                             MutatorMessage::RequestForMutatorAnnouncement => {
                                 let announcement =
@@ -450,11 +451,26 @@ impl ModalityClient {
                                     .rt
                                     .block_on(inner.mut_plane_conn.write_msg(&announcement))
                                     .expect("Mutator announcement");
+                                inner.quick_event_attrs(
+                                    "modality.mutator.announced",
+                                    [kv("event.mutator.id", mutator_id_to_attr_val(mutator_id))],
+                                );
                             }
                             MutatorMessage::NewMutation {
                                 mutation_id,
                                 params,
                             } => {
+                                inner.quick_event_attrs(
+                                    "modality.mutation.command_communicated",
+                                    [
+                                        kv("event.mutator.id", mutator_id_to_attr_val(mutator_id)),
+                                        kv(
+                                            "event.mutation.id",
+                                            mutation_id_to_attr_val(mutation_id),
+                                        ),
+                                    ],
+                                );
+
                                 // Reset active mutation first, if any
                                 if let Some(active_mutation_id) =
                                     inner.active_mutations.remove(&mutator_id)
@@ -474,6 +490,18 @@ impl ModalityClient {
 
                                 inner.active_mutations.insert(mutator_id, mutation_id);
 
+                                inner.quick_event_attrs(
+                                    "modality.mutation.injected",
+                                    [
+                                        kv("event.mutator.id", mutator_id_to_attr_val(mutator_id)),
+                                        kv(
+                                            "event.mutation.id",
+                                            mutation_id_to_attr_val(mutation_id),
+                                        ),
+                                        kv("event.mutation.success", true),
+                                    ],
+                                );
+
                                 tracing::debug!(
                                         mutator_id = %mutator_id,
                                         mutation_id = %mutation_id,
@@ -485,6 +513,20 @@ impl ModalityClient {
                                 if let Some(active_mutation_id) =
                                     inner.active_mutations.remove(&mutator_id)
                                 {
+                                    inner.quick_event_attrs(
+                                        "modality.mutation.clear_communicated",
+                                        [
+                                            kv(
+                                                "event.mutator.id",
+                                                mutator_id_to_attr_val(mutator_id),
+                                            ),
+                                            kv(
+                                                "event.mutation.id",
+                                                mutation_id_to_attr_val(active_mutation_id),
+                                            ),
+                                        ],
+                                    );
+
                                     tracing::debug!(
                                             mutator_id = %mutator_id,
                                             mutation_id = %active_mutation_id,
@@ -662,6 +704,21 @@ impl Inner {
         });
 
         client.as_mut().map(|client| self.rt.block_on(f(client)))
+    }
+
+    // For modality-mod-internal use
+    fn quick_event_attrs<A, K, V>(&mut self, name: &str, attributes: A)
+    where
+        A: IntoIterator<Item = (K, V)>,
+        K: Into<AttrKey>,
+        V: Into<AttrVal>,
+    {
+        let mut attrs = vec![("event.name".to_string().into(), name.into())];
+        attrs.extend(attributes.into_iter().map(|(k, v)| (k.into(), v.into())));
+
+        self.with_current_timeline_client(|client| client.emit_event(attrs))
+            .unwrap_or(Ok(()))
+            .expect("emit quick event with attrs");
     }
 }
 
@@ -936,4 +993,14 @@ enum MutatorMessage {
     ClearMutation {
         reset_if_active: bool,
     },
+}
+
+fn mutation_id_to_attr_val(mutation_id: MutationId) -> AttrVal {
+    uuid_to_integer_attr_val(mutation_id.as_ref())
+}
+fn mutator_id_to_attr_val(mutator_id: MutatorId) -> AttrVal {
+    uuid_to_integer_attr_val(mutator_id.as_ref())
+}
+fn uuid_to_integer_attr_val(u: &Uuid) -> AttrVal {
+    i128::from_le_bytes(*u.as_bytes()).into()
 }
