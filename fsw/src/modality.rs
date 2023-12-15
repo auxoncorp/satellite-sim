@@ -468,6 +468,7 @@ impl ModalityClient {
                                             "event.mutation.id",
                                             mutation_id_to_attr_val(mutation_id),
                                         ),
+                                        kv("event.mutation.success", true),
                                     ],
                                 );
 
@@ -524,6 +525,7 @@ impl ModalityClient {
                                                 "event.mutation.id",
                                                 mutation_id_to_attr_val(active_mutation_id),
                                             ),
+                                            kv("event.mutation.success", true),
                                         ],
                                     );
 
