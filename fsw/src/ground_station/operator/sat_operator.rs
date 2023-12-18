@@ -117,7 +117,7 @@ impl<'a> SimulationComponent<'a> for SatOperator {
                 for (sat, flag) in self.flags_to_clear.drain() {
                     let _ = self
                         .operator_action_tx
-                        .try_send(dbg!(OperatorAction::ClearSatelliteErrorFlag { sat, flag }));
+                        .try_send(OperatorAction::ClearSatelliteErrorFlag { sat, flag });
                 }
                 self.next_flag_clearing = None;
             }
