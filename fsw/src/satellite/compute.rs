@@ -5,9 +5,11 @@ use tracing::warn;
 
 use crate::{
     channel::{Receiver, Sender},
+    event,
     modality::{AttrsBuilder, MODALITY},
     mutator::{watchdog_out_of_sync_descriptor, GenericBooleanMutator},
     point_failure::{PointFailure, PointFailureConfig},
+    recv,
     satellite::{
         SatelliteEnvironment, SatelliteId, SatelliteSharedState, TemperatureSensorModel,
         TemperatureSensorRandomIntervalModelParams,
@@ -16,6 +18,7 @@ use crate::{
         Detections, GroundToSatMessage, SatErrorFlag, SatToGroundMessage, SatToGroundMessageBody,
         SatelliteTelemetry,
     },
+    try_send,
     units::{Ratio, Temperature, TemperatureInterval, Time, Timestamp},
     SimulationComponent,
 };
@@ -274,7 +277,7 @@ impl<'a> SimulationComponent<'a> for ComputeSubsystem {
     fn init(&mut self, env: &'a Self::Environment, sat: &mut SatelliteSharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
         MODALITY.emit_sat_timeline_attrs("cpu", sat.id);
-        MODALITY.quick_event("init");
+        event!("init");
 
         self.temp_sensor.init(env, sat);
 
@@ -287,7 +290,7 @@ impl<'a> SimulationComponent<'a> for ComputeSubsystem {
 
     fn reset(&mut self, env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
-        MODALITY.quick_event("reset");
+        event!("reset");
         self.hard_reset(env.sim_info.relative_time, sat);
     }
 
@@ -301,12 +304,12 @@ impl<'a> SimulationComponent<'a> for ComputeSubsystem {
 
         self.update_fault_models(dt);
 
-        let mut power_res = self.channels.power_res_rx.recv();
-        let mut comms_res = self.channels.comms_res_rx.recv();
-        let mut vision_detections = self.channels.vision_detections_rx.recv();
-        let mut vision_res = self.channels.vision_res_rx.recv();
-        let mut imu_sample = self.channels.imu_sample_rx.recv();
-        let mut imu_res = self.channels.imu_res_rx.recv();
+        let mut power_res = recv!(&mut self.channels.power_res_rx);
+        let mut comms_res = recv!(&mut self.channels.comms_res_rx);
+        let mut vision_detections = recv!(&mut self.channels.vision_detections_rx);
+        let mut vision_res = recv!(&mut self.channels.vision_res_rx);
+        let mut imu_sample = recv!(&mut self.channels.imu_sample_rx);
+        let mut imu_res = recv!(&mut self.channels.imu_res_rx);
 
         if self.error_register.out_of_sync {
             warn!("Detected compute watchdog, triggering hard reset");
@@ -315,31 +318,26 @@ impl<'a> SimulationComponent<'a> for ComputeSubsystem {
 
         if let Some(vision_detections) = vision_detections.take() {
             self.last_sequence_number += 1;
-            let _ = self
-                .channels
-                .comms_cmd_tx
-                .try_send(CommsCommand::SendGroundMessage(Box::new(
-                    SatToGroundMessage {
-                        seq: self.last_sequence_number,
-                        satellite_id: sat.id.satcat_id,
-                        satellite_name: sat.id.name,
-                        sat_send_timestamp: sat.rtc,
-                        body: SatToGroundMessageBody::Detections(vision_detections),
-                    },
-                )));
+            let _ = try_send!(
+                &mut self.channels.comms_cmd_tx,
+                CommsCommand::SendGroundMessage(Box::new(SatToGroundMessage {
+                    seq: self.last_sequence_number,
+                    satellite_id: sat.id.satcat_id,
+                    satellite_name: sat.id.name,
+                    sat_send_timestamp: sat.rtc,
+                    body: SatToGroundMessageBody::Detections(vision_detections),
+                },))
+            );
         }
 
         match &mut self.telemetry_state {
             TelemetryState::Idle { collect_time } => {
                 if &sat.rtc >= collect_time {
-                    let _ = self.channels.power_cmd_tx.try_send(PowerCommand::GetStatus);
-                    let _ = self.channels.comms_cmd_tx.try_send(CommsCommand::GetStatus);
-                    let _ = self.channels.comms_cmd_tx.try_send(CommsCommand::GetGps);
-                    let _ = self
-                        .channels
-                        .vision_cmd_tx
-                        .try_send(VisionCommand::GetStatus);
-                    let _ = self.channels.imu_cmd_tx.try_send(ImuCommand::GetStatus);
+                    let _ = try_send!(&mut self.channels.power_cmd_tx, PowerCommand::GetStatus);
+                    let _ = try_send!(&mut self.channels.comms_cmd_tx, CommsCommand::GetStatus);
+                    let _ = try_send!(&mut self.channels.comms_cmd_tx, CommsCommand::GetGps);
+                    let _ = try_send!(&mut self.channels.vision_cmd_tx, VisionCommand::GetStatus);
+                    let _ = try_send!(&mut self.channels.imu_cmd_tx, ImuCommand::GetStatus);
 
                     let telem_rate = self.config.telemetry_rate
                         + (self.config.telemetry_rate * self.telemetry_timer_degraded_drift_ratio);
@@ -411,20 +409,18 @@ impl<'a> SimulationComponent<'a> for ComputeSubsystem {
 
                 if pending_telemetry.is_complete() || &sat.rtc >= timeout_send_time {
                     self.last_sequence_number += 1;
-                    let _ = self
-                        .channels
-                        .comms_cmd_tx
-                        .try_send(CommsCommand::SendGroundMessage(Box::new(
-                            SatToGroundMessage {
-                                seq: self.last_sequence_number,
-                                satellite_id: sat.id.satcat_id,
-                                satellite_name: sat.id.name,
-                                sat_send_timestamp: sat.rtc,
-                                body: SatToGroundMessageBody::SatelliteTelemetry(Box::new(
-                                    pending_telemetry.as_ref().clone(),
-                                )),
-                            },
-                        )));
+                    let _ = try_send!(
+                        &mut self.channels.comms_cmd_tx,
+                        CommsCommand::SendGroundMessage(Box::new(SatToGroundMessage {
+                            seq: self.last_sequence_number,
+                            satellite_id: sat.id.satcat_id,
+                            satellite_name: sat.id.name,
+                            sat_send_timestamp: sat.rtc,
+                            body: SatToGroundMessageBody::SatelliteTelemetry(Box::new(
+                                pending_telemetry.as_ref().clone(),
+                            )),
+                        },))
+                    );
                     self.telemetry_state = TelemetryState::Idle {
                         collect_time: *next_collect_time,
                     };
@@ -462,18 +458,17 @@ impl<'a> SimulationComponent<'a> for ComputeSubsystem {
 fn process_ground_to_sat_msg(msg: GroundToSatMessage, channels: &mut ComputeChannels) {
     match msg {
         GroundToSatMessage::PrioritizeIrEvent { sat: _, source_id } => {
-            let _ = channels
-                .vision_cmd_tx
-                .try_send(VisionCommand::PrioritizeIrEvent(source_id));
+            let _ = try_send!(
+                &mut channels.vision_cmd_tx,
+                VisionCommand::PrioritizeIrEvent(source_id)
+            );
         }
         GroundToSatMessage::ClearSatelliteErrorFlag { sat: _, flag } => match flag {
             SatErrorFlag::ImuDegraded => {
-                let _ = channels.imu_cmd_tx.try_send(ImuCommand::Reset);
+                let _ = try_send!(&mut channels.imu_cmd_tx, ImuCommand::Reset);
             }
             SatErrorFlag::ImuDataInconsistency => {
-                let _ = channels
-                    .imu_cmd_tx
-                    .try_send(ImuCommand::ClearDataInconsistency);
+                let _ = try_send!(&mut channels.imu_cmd_tx, ImuCommand::ClearDataInconsistency);
             } // NOTE: the rest are watchdog assertions, which trigger component hard-resets and auto
             // auto-clear
             _ => (),

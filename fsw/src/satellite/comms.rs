@@ -7,6 +7,7 @@ use tracing::warn;
 
 use crate::{
     channel::{Receiver, Sender, TracedMessage},
+    event,
     ground_station::Relayed,
     modality::{kv, AttrsBuilder, MODALITY},
     mutator::{
@@ -14,12 +15,14 @@ use crate::{
         MutatorActuatorDescriptor,
     },
     point_failure::{PointFailure, PointFailureConfig},
+    recv,
     satellite::temperature_sensor::{
         TemperatureSensor, TemperatureSensorConfig, TemperatureSensorModel,
         TemperatureSensorRandomIntervalModelParams,
     },
     satellite::{SatelliteEnvironment, SatelliteId, SatelliteSharedState},
     system::{GroundToSatMessage, SatToGroundMessage},
+    try_send,
     units::{Ratio, Temperature, TemperatureInterval, Time, Timestamp},
     SimulationComponent,
 };
@@ -351,7 +354,6 @@ impl TracedMessage for CommsCommand {
 
 #[derive(Debug, Clone)]
 pub enum CommsResponse {
-    #[allow(dead_code)]
     RecvGroundMessage(GroundToSatMessage),
     GpsPosition(nav_types::NVector<f64>),
     LastKnownGpsPosition(nav_types::NVector<f64>),
@@ -493,7 +495,7 @@ impl<'a> SimulationComponent<'a> for CommsSubsystem {
     fn init(&mut self, env: &'a Self::Environment, sat: &mut SatelliteSharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
         MODALITY.emit_sat_timeline_attrs(Self::COMPONENT_NAME, sat.id);
-        MODALITY.quick_event("init");
+        event!("init");
 
         self.temp_sensor.init(env, sat);
         self.init_fault_models(sat.id);
@@ -501,7 +503,7 @@ impl<'a> SimulationComponent<'a> for CommsSubsystem {
 
     fn reset(&mut self, env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
-        MODALITY.quick_event("reset");
+        event!("reset");
         self.hard_reset(env.sim_info.relative_time);
     }
 
@@ -567,7 +569,7 @@ impl<'a> SimulationComponent<'a> for CommsSubsystem {
         self.sat_to_ground.set_location(gps_nvec);
         self.ground_to_sat.set_location(gps_nvec);
 
-        if let Some(msg) = self.cmd_rx.recv() {
+        if let Some(msg) = recv!(&mut self.cmd_rx) {
             match msg {
                 CommsCommand::SendGroundMessage(msg) => {
                     if !self.error_register.out_of_sync {
@@ -575,38 +577,44 @@ impl<'a> SimulationComponent<'a> for CommsSubsystem {
                             if self.maybe_corrupt_msg(corrupt_chance) {
                                 warn!(seq = msg.seq, "Dropping corrupt message");
                             } else {
-                                let _ = self.sat_to_ground.try_send(*msg);
+                                let _ = try_send!(&mut self.sat_to_ground, *msg);
                             }
                         } else if !ground_trx_offline {
-                            let _ = self.sat_to_ground.try_send(*msg);
+                            let _ = try_send!(&mut self.sat_to_ground, *msg);
                         }
                     }
                 }
                 CommsCommand::GetGps => {
                     if !self.error_register.out_of_sync {
                         if gps_offline {
-                            let _ = self.res_tx.try_send(CommsResponse::LastKnownGpsPosition(
-                                self.last_known_gps_nvec,
-                            ));
+                            let _ = try_send!(
+                                &mut self.res_tx,
+                                CommsResponse::LastKnownGpsPosition(self.last_known_gps_nvec,)
+                            );
                         } else {
-                            let _ = self.res_tx.try_send(CommsResponse::GpsPosition(gps_nvec));
+                            let _ =
+                                try_send!(&mut self.res_tx, CommsResponse::GpsPosition(gps_nvec));
                         }
                     }
                 }
                 CommsCommand::GetStatus => {
-                    let _ = self.res_tx.try_send(CommsResponse::Status(CommsStatus {
-                        temperature: self.temp_sensor.temperature(),
-                        error_register: self.error_register,
-                    }));
+                    let _ = try_send!(
+                        &mut self.res_tx,
+                        CommsResponse::Status(CommsStatus {
+                            temperature: self.temp_sensor.temperature(),
+                            error_register: self.error_register,
+                        })
+                    );
                 }
             }
         }
 
-        while let Some(msg) = self.ground_to_sat.recv() {
+        while let Some(msg) = recv!(&mut self.ground_to_sat) {
             if msg.inner.destination() == sat.id.satcat_id {
-                let _ = self
-                    .res_tx
-                    .try_send(CommsResponse::RecvGroundMessage(msg.inner));
+                let _ = try_send!(
+                    &mut self.res_tx,
+                    CommsResponse::RecvGroundMessage(msg.inner)
+                );
             }
         }
     }

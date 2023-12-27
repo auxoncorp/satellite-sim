@@ -3,10 +3,7 @@
 use std::collections::HashMap;
 use tracing::debug;
 
-use crate::{
-    modality::{AttrsBuilder, MODALITY},
-    units::Time,
-};
+use crate::{event, modality::AttrsBuilder, units::Time};
 
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
 pub enum PointFailureThresholdOperator<T: PartialOrd> {
@@ -144,7 +141,7 @@ impl<T: Copy + PartialOrd + std::fmt::Debug> PointFailure<T> {
                 self.triggered = self.triggered.saturating_add(1);
                 self.hold_timer += dt;
 
-                MODALITY.quick_event_attrs("point_failure_triggered", self.attrs(measurement));
+                event!("point_failure_triggered", self.attrs(measurement));
 
                 if self.hold_timer >= self.config.hold_period {
                     // Conditions are met, now active
@@ -158,7 +155,7 @@ impl<T: Copy + PartialOrd + std::fmt::Debug> PointFailure<T> {
                         context = ?self.context,
                         "Point failure activated");
 
-                    MODALITY.quick_event_attrs("point_failure_activated", self.attrs(measurement));
+                    event!("point_failure_activated", self.attrs(measurement));
                 }
             } else {
                 // Measurement is below the threshold and we haven't exceeded

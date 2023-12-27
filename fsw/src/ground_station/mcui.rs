@@ -11,13 +11,16 @@ use modality_api::TimelineId;
 
 use crate::{
     channel::{Receiver, Sender},
+    event,
     external_mission_control::{Message, Telemetry},
     modality::{kv, MODALITY},
+    recv,
     satellite::SatCatId,
     system::{
         GroundToSatMessage, SatErrorFlag, SatToGroundMessage, SatToGroundMessageBody,
         SatelliteTelemetry, SystemEnvironment,
     },
+    try_send,
     units::Timestamp,
     SimulationComponent,
 };
@@ -202,12 +205,12 @@ impl<'a> SimulationComponent<'a> for MissionControlUISubsystem {
             kv("timeline.ground_station.name", "consolidated"),
         ]);
 
-        MODALITY.quick_event("init");
+        event!("init");
     }
 
     fn reset(&mut self, _env: &'a Self::Environment, _: &mut Self::SharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, self.relative_rtc);
-        MODALITY.quick_event("reset");
+        event!("reset");
     }
 
     fn step(
@@ -218,7 +221,7 @@ impl<'a> SimulationComponent<'a> for MissionControlUISubsystem {
     ) {
         self.relative_rtc += dt;
 
-        while let Some(msg) = self.sat_telemetry_rx.recv() {
+        while let Some(msg) = recv!(&mut self.sat_telemetry_rx) {
             // Forward a copy to the external mission control stack
             // periodically based on sim iters
             if env.sim_info.sim_iteration == 0 || (env.sim_info.sim_iteration % 50 == 0) {
@@ -238,22 +241,23 @@ impl<'a> SimulationComponent<'a> for MissionControlUISubsystem {
                     telem,
                 );
                 if state_change.has_action() {
-                    let _ = self
-                        .sat_operator_notification_tx
-                        .try_send(OperatorNotification::SatErrorFlagStateChange(state_change));
+                    let _ = try_send!(
+                        &mut self.sat_operator_notification_tx,
+                        OperatorNotification::SatErrorFlagStateChange(state_change)
+                    );
                 }
             }
         }
 
-        while let Some(new_view) = self.selected_global_view_rx.recv() {
+        while let Some(new_view) = recv!(&mut self.selected_global_view_rx) {
             let state_change = self.process_new_global_ir_view(new_view);
             if state_change.has_action() {
                 let tx_msg = OperatorNotification::GlobalIRViewStateChange(state_change);
-                let _ = self.ir_operator_notification_tx.try_send(tx_msg);
+                let _ = try_send!(&mut self.ir_operator_notification_tx, tx_msg);
             }
         }
 
-        while let Some(action) = self.operator_action_rx.recv() {
+        while let Some(action) = recv!(&mut self.operator_action_rx) {
             match action {
                 OperatorAction::PrioritizeIrEvent { id } => {
                     if let Some(view) = &self.current_global_ir_view {
@@ -264,14 +268,14 @@ impl<'a> SimulationComponent<'a> for MissionControlUISubsystem {
                                 let (sat, source_id) = obs.based_on_sat_camera;
                                 let tx_msg =
                                     GroundToSatMessage::PrioritizeIrEvent { sat, source_id };
-                                let _ = self.sat_tx.try_send(tx_msg);
+                                let _ = try_send!(&mut self.sat_tx, tx_msg);
                             }
                         }
                     }
                 }
                 OperatorAction::ClearSatelliteErrorFlag { sat, flag } => {
                     let tx_msg = GroundToSatMessage::ClearSatelliteErrorFlag { sat, flag };
-                    let _ = self.sat_tx.try_send(tx_msg);
+                    let _ = try_send!(&mut self.sat_tx, tx_msg);
                 }
             }
         }

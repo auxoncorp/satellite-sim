@@ -4,9 +4,12 @@ use modality_api::TimelineId;
 
 use crate::{
     channel::{Receiver, Sender},
+    event,
     ground_station::consolidated::{OperatorAction, OperatorNotification},
     modality::{kv, MODALITY},
+    recv,
     system::SystemEnvironment,
+    try_send,
     units::Timestamp,
     SimulationComponent,
 };
@@ -59,12 +62,12 @@ impl<'a> SimulationComponent<'a> for IROperator {
             kv("timeline.ground_station.name", "consolidated"),
         ]);
 
-        MODALITY.quick_event("init");
+        event!("init");
     }
 
     fn reset(&mut self, _env: &'a Self::Environment, _: &mut Self::SharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, self.wristwatch);
-        MODALITY.quick_event("reset");
+        event!("reset");
     }
 
     fn step(
@@ -77,14 +80,15 @@ impl<'a> SimulationComponent<'a> for IROperator {
         self.wristwatch += dt;
 
         // TODO print shit so we know it's happening
-        while let Some(msg) = self.operator_notification_rx.recv() {
+        while let Some(msg) = recv!(&mut self.operator_notification_rx) {
             match msg {
                 OperatorNotification::GlobalIRViewStateChange(sc) => {
                     // This operator is a squirrel who always focuses on the new, shiny event.
                     if let Some(new_ev) = sc.new_events.first() {
-                        let _ = self
-                            .operator_action_tx
-                            .try_send(OperatorAction::PrioritizeIrEvent { id: *new_ev });
+                        let _ = try_send!(
+                            &mut self.operator_action_tx,
+                            OperatorAction::PrioritizeIrEvent { id: *new_ev }
+                        );
                     }
                 }
                 _ => warn!(msg = ?msg, "Unexpected IR operator notification"),

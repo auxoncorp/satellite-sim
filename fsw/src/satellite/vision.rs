@@ -9,15 +9,18 @@ use types42::prelude::GpsIndex;
 
 use crate::{
     channel::{Receiver, Sender, TracedMessage},
+    event,
     modality::{kv, AttrsBuilder, MODALITY},
     mutator::{watchdog_out_of_sync_descriptor, GenericBooleanMutator},
     point_failure::{PointFailure, PointFailureConfig},
+    recv,
     satellite::temperature_sensor::{
         TemperatureSensor, TemperatureSensorConfig, TemperatureSensorModel,
         TemperatureSensorRandomIntervalModelParams,
     },
     satellite::{SatelliteEnvironment, SatelliteId, SatelliteSharedState},
     system::{CameraSourceId, Detections, IREvent},
+    try_send,
     units::{Angle, ElectricPotential, LuminousIntensity, Temperature, TemperatureInterval, Time},
     SimulationComponent,
 };
@@ -418,7 +421,7 @@ impl<'a> SimulationComponent<'a> for VisionSubsystem {
     fn init(&mut self, env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
         MODALITY.emit_sat_timeline_attrs(Self::COMPONENT_NAME, sat.id);
-        MODALITY.quick_event("init");
+        event!("init");
 
         self.scanner_cam_temp_sensor.init(env, sat);
         self.focus_cam_temp_sensor.init(env, sat);
@@ -452,7 +455,7 @@ impl<'a> SimulationComponent<'a> for VisionSubsystem {
 
     fn reset(&mut self, env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
-        MODALITY.quick_event("reset");
+        event!("reset");
         self.hard_reset(env.sim_info.relative_time);
     }
 
@@ -467,14 +470,17 @@ impl<'a> SimulationComponent<'a> for VisionSubsystem {
 
         self.update_fault_models(dt, sat.power_supply_voltage);
 
-        if let Some(cmd) = self.cmd_rx.recv() {
+        if let Some(cmd) = recv!(&mut self.cmd_rx) {
             match cmd {
                 VisionCommand::GetStatus => {
-                    let _ = self.res_tx.try_send(VisionResponse::Status(VisionStatus {
-                        scanner_camera_temperature: self.scanner_cam_temp_sensor.temperature(),
-                        focus_camera_temperature: self.focus_cam_temp_sensor.temperature(),
-                        error_register: self.error_register,
-                    }));
+                    let _ = try_send!(
+                        &mut self.res_tx,
+                        VisionResponse::Status(VisionStatus {
+                            scanner_camera_temperature: self.scanner_cam_temp_sensor.temperature(),
+                            focus_camera_temperature: self.focus_cam_temp_sensor.temperature(),
+                            error_register: self.error_register,
+                        })
+                    );
                 }
                 VisionCommand::PrioritizeIrEvent(source_id) => {
                     let mut tracked_objects = self
@@ -498,7 +504,7 @@ impl<'a> SimulationComponent<'a> for VisionSubsystem {
                             rel_time = env.sim_info.relative_time.as_secs(),
                             "Prioritized IR event"
                         );
-                        MODALITY.quick_event_attrs(
+                        event!(
                             "prioritize_ir_event",
                             gt_and_src_id_attrs(*gt_id, source_id),
                         );
@@ -509,7 +515,7 @@ impl<'a> SimulationComponent<'a> for VisionSubsystem {
                             rel_time = env.sim_info.relative_time.as_secs(),
                             "Requested prioritize IR event not tracked"
                         );
-                        MODALITY.quick_event("prioritize_ir_event_invalid");
+                        event!("prioritize_ir_event_invalid");
                     }
                 }
             }
@@ -598,7 +604,7 @@ impl<'a> SimulationComponent<'a> for VisionSubsystem {
                     rel_time = env.sim_info.relative_time.as_secs(),
                     "Lost focus of IR event"
                 );
-                MODALITY.quick_event_attrs(
+                event!(
                     "lost_focus",
                     gt_and_src_id_attrs(in_focus_object_ids.0, in_focus_object_ids.1),
                 );
@@ -634,12 +640,12 @@ impl<'a> SimulationComponent<'a> for VisionSubsystem {
                         rel_time = env.sim_info.relative_time.as_secs(),
                         "Focusing on IR event"
                     );
-                    MODALITY.quick_event_attrs(
+                    event!(
                         "acquired_focus",
                         gt_and_src_id_attrs(
                             most_intense_scanner_event.ground_truth_id,
                             most_intense_scanner_event.source_id,
-                        ),
+                        )
                     );
 
                     self.in_focus_object_ids = (
@@ -683,10 +689,13 @@ impl<'a> SimulationComponent<'a> for VisionSubsystem {
         }
 
         if !detection_events.is_empty() {
-            let _ = self.event_tx.try_send(Detections {
-                sat_timestamp: sat.rtc,
-                events: detection_events,
-            });
+            let _ = try_send!(
+                &mut self.event_tx,
+                Detections {
+                    sat_timestamp: sat.rtc,
+                    events: detection_events,
+                }
+            );
         }
 
         // Update GUI
@@ -829,7 +838,7 @@ impl ObjectTracker {
                         rel_time = rel_time.as_secs(),
                         "Detected IR event"
                     );
-                    MODALITY.quick_event_attrs(
+                    event!(
                         "detected_ir_event",
                         gt_and_src_id_attrs(ev.ground_truth_id, sid),
                     );
@@ -850,7 +859,7 @@ impl ObjectTracker {
                     rel_time = rel_time.as_secs(),
                     "Lost IR event"
                 );
-                MODALITY.quick_event_attrs(
+                event!(
                     "lost_ir_event",
                     gt_and_src_id_attrs(ground_truth_event.ground_truth_id, sid),
                 );

@@ -6,17 +6,20 @@ use tracing::warn;
 
 use crate::{
     channel::{Receiver, Sender, TracedMessage},
+    event,
     modality::{kv, AttrsBuilder, MODALITY},
     mutator::{
         constant_temperature_descriptor, watchdog_out_of_sync_descriptor, GenericBooleanMutator,
         GenericSetFloatMutator, MutatorActuatorDescriptor,
     },
     point_failure::{PointFailure, PointFailureConfig},
+    recv,
     satellite::temperature_sensor::{
         TemperatureSensor, TemperatureSensorConfig, TemperatureSensorModel,
         TemperatureSensorRandomIntervalModelParams,
     },
     satellite::{SatelliteEnvironment, SatelliteId, SatelliteSharedState},
+    try_send,
     units::{
         ElectricCharge, ElectricCurrent, ElectricPotential, PotentialOverCharge, Ratio,
         Temperature, TemperatureInterval, Time,
@@ -402,7 +405,7 @@ impl<'a> SimulationComponent<'a> for PowerSubsystem {
     fn init(&mut self, env: &'a Self::Environment, sat: &mut Self::SharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
         MODALITY.emit_sat_timeline_attrs(Self::COMPONENT_NAME, sat.id);
-        MODALITY.quick_event("init");
+        event!("init");
 
         self.temp_sensor.init(env, sat);
         self.init_fault_models(sat.id);
@@ -410,7 +413,7 @@ impl<'a> SimulationComponent<'a> for PowerSubsystem {
 
     fn reset(&mut self, env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
-        MODALITY.quick_event("reset");
+        event!("reset");
         self.hard_reset(env.sim_info.relative_time);
     }
 
@@ -460,16 +463,20 @@ impl<'a> SimulationComponent<'a> for PowerSubsystem {
             sat.power_supply_voltage = self.battery_voltage;
         }
 
-        if let Some(cmd) = self.cmd_rx.recv() {
+        if let Some(cmd) = recv!(&mut self.cmd_rx) {
             match cmd {
                 PowerCommand::GetStatus => {
-                    let _ = self.res_tx.try_send(PowerResponse::Status(PowerStatus {
-                        battery_charge: self.battery_charge,
-                        battery_charge_ratio: self.battery_charge / self.config.battery_max_charge,
-                        solar_panel_illumination: illumination,
-                        temperature: self.temp_sensor.temperature(),
-                        error_register: self.error_register,
-                    }));
+                    let _ = try_send!(
+                        &mut self.res_tx,
+                        PowerResponse::Status(PowerStatus {
+                            battery_charge: self.battery_charge,
+                            battery_charge_ratio: self.battery_charge
+                                / self.config.battery_max_charge,
+                            solar_panel_illumination: illumination,
+                            temperature: self.temp_sensor.temperature(),
+                            error_register: self.error_register,
+                        })
+                    );
                 }
             }
         }
@@ -567,11 +574,11 @@ mod tests {
             // Ask the power system its status
             let mut cmd_tx = cmd_ch.sender(None);
             let mut status_rx = status_ch.receiver(None);
-            cmd_tx.try_send(PowerCommand::GetStatus).unwrap();
+            try_send!(&mut cmd_tx, PowerCommand::GetStatus).unwrap();
             cmd_ch.step().unwrap();
             power_system.step(dt, &env, &mut common_state);
             status_ch.step().unwrap();
-            let status = status_rx.recv().unwrap();
+            let status = recv!(&mut status_rx).unwrap();
 
             match status {
                 PowerResponse::Status(status) => {

@@ -5,9 +5,12 @@ use nav_types::{NVector, ECEF, WGS84};
 
 use crate::{
     channel::{Receiver, Sender, TracedMessage},
+    event,
     modality::{kv, MODALITY},
     mutator::{GenericSetFloatMutator, MutatorActuatorDescriptor, SimTimer},
+    recv,
     system::{GroundToSatMessage, SatToGroundMessage, SystemEnvironment, SystemSharedState},
+    try_send,
     units::{Angle, Ratio, Time, Timestamp},
     SimulationComponent,
 };
@@ -276,7 +279,7 @@ impl<'a> SimulationComponent<'a> for RelayGroundStation {
             kv("timeline.longitude", long),
         ]);
 
-        MODALITY.quick_event("init");
+        event!("init");
 
         self.init_fault_models();
 
@@ -291,7 +294,7 @@ impl<'a> SimulationComponent<'a> for RelayGroundStation {
 
     fn reset(&mut self, _env: &'a Self::Environment, _shared_state: &mut Self::SharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, self.rtc);
-        MODALITY.quick_event("reset");
+        event!("reset");
     }
 
     fn step(
@@ -359,11 +362,14 @@ fn relay<T: TracedMessage>(
     id: GroundStationId,
     timestamp: Timestamp,
 ) {
-    while let Some(msg) = from.recv() {
-        let _ = to.try_send(Relayed {
-            relay_ground_station_id: id,
-            relay_timestamp: timestamp,
-            inner: msg,
-        });
+    while let Some(msg) = recv!(from) {
+        let _ = try_send!(
+            to,
+            Relayed {
+                relay_ground_station_id: id,
+                relay_timestamp: timestamp,
+                inner: msg,
+            }
+        );
     }
 }

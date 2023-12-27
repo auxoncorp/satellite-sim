@@ -36,6 +36,8 @@ const MUTATION_PLANE_POLL_TIMEOUT_ENV_VAR: &str = "MODALITY_MUTATION_PLANE_TIMEO
 /// current directory.
 const AUTO_RUN_ID_FILE_NAME: &str = ".runid";
 
+const MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
+
 pub const MODALITY: ModalityClient = ModalityClient;
 
 pub struct ModalityClient;
@@ -1005,4 +1007,50 @@ fn mutator_id_to_attr_val(mutator_id: MutatorId) -> AttrVal {
 }
 fn uuid_to_integer_attr_val(u: &Uuid) -> AttrVal {
     i128::from_le_bytes(*u.as_bytes()).into()
+}
+
+pub struct Callsite {
+    pub module_path: &'static str,
+    pub file: &'static str,
+    pub line: u32,
+}
+
+impl Callsite {
+    pub fn to_attrs(&self) -> Vec<(AttrKey, AttrVal)> {
+        let workspace_root = MANIFEST_DIR.trim_end_matches("/fsw");
+        vec![
+            kv("event.source.module_path", self.module_path),
+            kv("event.source.file", self.file),
+            kv("event.source.line", self.line),
+            kv(
+                "event.source.uri",
+                format!("file://{workspace_root}/{}:{}", self.file, self.line),
+            ),
+        ]
+    }
+}
+
+#[macro_export]
+macro_rules! callsite {
+    () => {
+        $crate::modality::Callsite {
+            module_path: module_path!(),
+            file: file!(),
+            line: line!(),
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! event {
+    ($name:expr) => {{
+        static __CALLSITE: $crate::modality::Callsite = $crate::callsite!();
+        $crate::modality::MODALITY.quick_event_attrs($name, __CALLSITE.to_attrs());
+    }};
+
+    ($name:expr, $attrs:expr $(,)?) => {{
+        static __CALLSITE: $crate::modality::Callsite = $crate::callsite!();
+        let __attrs = $attrs.into_iter().chain(__CALLSITE.to_attrs().into_iter());
+        $crate::modality::MODALITY.quick_event_attrs($name, __attrs);
+    }};
 }

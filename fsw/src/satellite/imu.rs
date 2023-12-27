@@ -6,17 +6,20 @@ use tracing::warn;
 
 use crate::{
     channel::{Receiver, Sender, TracedMessage},
+    event,
     modality::{kv, AttrsBuilder, MODALITY},
     mutator::{
         constant_temperature_descriptor, watchdog_out_of_sync_descriptor, GenericBooleanMutator,
         GenericSetFloatMutator, MutatorActuatorDescriptor,
     },
     point_failure::{PointFailure, PointFailureConfig},
+    recv,
     satellite::temperature_sensor::{
         TemperatureSensor, TemperatureSensorConfig, TemperatureSensorModel,
         TemperatureSensorRandomIntervalModelParams,
     },
     satellite::{SatelliteEnvironment, SatelliteId, SatelliteSharedState},
+    try_send,
     units::{
         Acceleration, AngularVelocity, MagneticFluxDensity, Temperature, TemperatureInterval, Time,
         Timestamp,
@@ -416,14 +419,14 @@ impl<'a> SimulationComponent<'a> for ImuSubsystem {
     fn init(&mut self, env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
         MODALITY.emit_sat_timeline_attrs(Self::COMPONENT_NAME, sat.id);
-
+        event!("init");
         self.temp_sensor.init(env, sat);
         self.init_fault_models(sat.id);
     }
 
     fn reset(&mut self, env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
-        MODALITY.quick_event("reset");
+        event!("reset");
         self.hard_reset(env.sim_info.relative_time);
     }
 
@@ -466,24 +469,30 @@ impl<'a> SimulationComponent<'a> for ImuSubsystem {
                     MagneticFluxDensity::from_teslas(magf.field);
             }
 
-            let _ = self.sample_tx.try_send(sample);
+            let _ = try_send!(&mut self.sample_tx, sample);
         }
 
-        if let Some(cmd) = self.cmd_rx.recv() {
+        if let Some(cmd) = recv!(&mut self.cmd_rx) {
             match cmd {
                 ImuCommand::GetStatus => {
-                    let _ = self.res_tx.try_send(ImuResponse::Status(ImuStatus {
-                        temperature: self.temp_sensor.temperature(),
-                        error_register: self.error_register,
-                    }));
+                    let _ = try_send!(
+                        &mut self.res_tx,
+                        ImuResponse::Status(ImuStatus {
+                            temperature: self.temp_sensor.temperature(),
+                            error_register: self.error_register,
+                        })
+                    );
                 }
                 ImuCommand::Reset => {
                     self.soft_reset(env.sim_info.relative_time);
 
-                    let _ = self.res_tx.try_send(ImuResponse::Status(ImuStatus {
-                        temperature: self.temp_sensor.temperature(),
-                        error_register: self.error_register,
-                    }));
+                    let _ = try_send!(
+                        &mut self.res_tx,
+                        ImuResponse::Status(ImuStatus {
+                            temperature: self.temp_sensor.temperature(),
+                            error_register: self.error_register,
+                        })
+                    );
                 }
                 ImuCommand::ClearDataInconsistency => {
                     self.error_register.data_inconsistency = false;
@@ -492,10 +501,13 @@ impl<'a> SimulationComponent<'a> for ImuSubsystem {
                         pf.reset();
                     }
 
-                    let _ = self.res_tx.try_send(ImuResponse::Status(ImuStatus {
-                        temperature: self.temp_sensor.temperature(),
-                        error_register: self.error_register,
-                    }));
+                    let _ = try_send!(
+                        &mut self.res_tx,
+                        ImuResponse::Status(ImuStatus {
+                            temperature: self.temp_sensor.temperature(),
+                            error_register: self.error_register,
+                        })
+                    );
                 }
             }
         }

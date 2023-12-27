@@ -5,9 +5,12 @@ use modality_api::TimelineId;
 use super::{CorrelatedIrEvents, RackSharedState, Relayed};
 use crate::{
     channel::{Receiver, Sender},
+    event,
     modality::{kv, MODALITY},
+    recv,
     satellite::SatCatId,
     system::{Detections, SatToGroundMessage, SatToGroundMessageBody, SystemEnvironment},
+    try_send,
     units::{Time, Timestamp},
     SimulationComponent,
 };
@@ -54,7 +57,7 @@ impl CorrelationSubsystem {
             .range((msg.inner.satellite_id, min_ts)..(msg.inner.satellite_id, max_ts));
 
         if detections_in_window.next().is_none() {
-            MODALITY.quick_event_attrs(
+            event!(
                 "novel_detections_payload",
                 [
                     kv("event.satellite.id", msg.inner.satellite_id),
@@ -67,14 +70,17 @@ impl CorrelationSubsystem {
             // add add it to the 'recent' set.
             self.recently_processed_detections
                 .insert((msg.inner.satellite_id, msg.relay_timestamp));
-            let _ = self.analysis_tx.try_send(CorrelatedIrEvents {
-                satellite_id: msg.inner.satellite_id,
-                satellite_name: msg.inner.satellite_name,
-                rack_timestamp: rack.rtc,
-                events: detections.events,
-            });
+            let _ = try_send!(
+                &mut self.analysis_tx,
+                CorrelatedIrEvents {
+                    satellite_id: msg.inner.satellite_id,
+                    satellite_name: msg.inner.satellite_name,
+                    rack_timestamp: rack.rtc,
+                    events: detections.events,
+                }
+            );
         } else {
-            MODALITY.quick_event_attrs(
+            event!(
                 "drop_duplicate_detections_payload",
                 [
                     kv("event.satellite.id", msg.inner.satellite_id),
@@ -94,7 +100,7 @@ impl CorrelationSubsystem {
         let count_after = self.recently_processed_detections.len();
         let prune_count = count_before - count_after;
         if prune_count > 0 {
-            MODALITY.quick_event_attrs(
+            event!(
                 "prune_old_detections",
                 [kv("event.count", prune_count as i64)],
             );
@@ -116,18 +122,18 @@ impl<'a> SimulationComponent<'a> for CorrelationSubsystem {
     fn init(&mut self, _env: &'a Self::Environment, rack: &mut Self::SharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, rack.rtc);
         MODALITY.emit_rack_timeline_attrs("correlation", rack.id);
-        MODALITY.quick_event("init");
+        event!("init");
     }
 
     fn reset(&mut self, _env: &'a Self::Environment, rack: &mut Self::SharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, rack.rtc);
-        MODALITY.quick_event("reset");
+        event!("reset");
     }
 
     fn step(&mut self, _dt: Time, _env: &SystemEnvironment<'a>, rack: &mut RackSharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, rack.rtc);
 
-        while let Some(msg) = self.relay_rx.recv() {
+        while let Some(msg) = recv!(&mut self.relay_rx) {
             if let SatToGroundMessageBody::Detections(_) = &msg.inner.body {
                 self.process_detections_msg(msg, rack);
             }

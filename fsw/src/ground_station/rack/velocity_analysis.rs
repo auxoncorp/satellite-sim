@@ -4,9 +4,12 @@ use ordered_float::OrderedFloat;
 use super::{AnalyzedIREvent, AnalyzedIREvents, CorrelatedIrEvents, IREventClass, RackSharedState};
 use crate::{
     channel::{Receiver, Sender},
+    event,
     modality::MODALITY,
+    recv,
     satellite::SatCatId,
     system::{IREvent, SystemEnvironment},
+    try_send,
     units::{Ratio, Time, Timestamp, Velocity},
     SimulationComponent,
 };
@@ -83,26 +86,29 @@ impl<'a> SimulationComponent<'a> for VelocityAnalysisSubsystem {
     fn init(&mut self, _env: &'a Self::Environment, rack: &mut Self::SharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, rack.rtc);
         MODALITY.emit_rack_timeline_attrs("velocity_analysis", rack.id);
-        MODALITY.quick_event("init");
+        event!("init");
     }
 
     fn reset(&mut self, _env: &'a Self::Environment, rack: &mut Self::SharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, rack.rtc);
-        MODALITY.quick_event("reset");
+        event!("reset");
     }
 
     fn step(&mut self, _dt: Time, _env: &SystemEnvironment<'a>, rack: &mut RackSharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, rack.rtc);
-        while let Some(msg) = self.correlation_rx.recv() {
+        while let Some(msg) = recv!(&mut self.correlation_rx) {
             let mut events = vec![];
             for ev in msg.events.into_iter() {
                 events.push(self.classify_event(ev, msg.satellite_id, msg.rack_timestamp));
             }
 
-            let _ = self.analyzed_tx.try_send(AnalyzedIREvents {
-                rack_timestamp: msg.rack_timestamp,
-                events,
-            });
+            let _ = try_send!(
+                &mut self.analyzed_tx,
+                AnalyzedIREvents {
+                    rack_timestamp: msg.rack_timestamp,
+                    events,
+                }
+            );
         }
     }
 }

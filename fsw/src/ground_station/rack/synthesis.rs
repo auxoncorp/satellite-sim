@@ -7,13 +7,16 @@ use std::collections::VecDeque;
 use super::{AnalyzedIREvents, IREventClass, RackId, RackSharedState};
 use crate::{
     channel::{Receiver, Sender},
+    event,
     ground_station::{
         consolidated::{GlobalIRView, TrackedEventId, TrackedIREvent},
         OperationalStatus,
     },
     modality::{kv, MODALITY},
     mutator::GenericBooleanMutator,
+    recv,
     system::{IREvent, SystemEnvironment},
+    try_send,
     units::{Length, LuminousIntensity, Time, Timestamp, Velocity},
     SimulationComponent,
 };
@@ -242,7 +245,7 @@ impl TrackedIREvent {
                         kvs.push(kv("event.camera.id", source_id));
                     }
 
-                    MODALITY.quick_event_attrs("time_out_old_observation", kvs);
+                    event!("time_out_old_observation", kvs);
                 }
             } else {
                 return;
@@ -258,13 +261,13 @@ impl<'a> SimulationComponent<'a> for SynthesisSubsystem {
     fn init(&mut self, _env: &'a Self::Environment, rack: &mut Self::SharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, rack.rtc);
         MODALITY.emit_rack_timeline_attrs("synthesis", rack.id);
-        MODALITY.quick_event("init");
+        event!("init");
         self.init_fault_models(rack.id);
     }
 
     fn reset(&mut self, _env: &'a Self::Environment, rack: &mut Self::SharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, rack.rtc);
-        MODALITY.quick_event("reset");
+        event!("reset");
 
         if let Some(m) = self.rack_offline.as_mut() {
             MODALITY.clear_mutation(m);
@@ -282,7 +285,7 @@ impl<'a> SimulationComponent<'a> for SynthesisSubsystem {
             .map(|m| m.is_active())
             .unwrap_or(false);
 
-        while let Some(msg) = self.analyzed_rx.recv() {
+        while let Some(msg) = recv!(&mut self.analyzed_rx) {
             if rack_offline {
                 // Drop ingress
                 // NOTE: we could ignore and let the channel fill up
@@ -297,7 +300,7 @@ impl<'a> SimulationComponent<'a> for SynthesisSubsystem {
                     // ... then add it as another supporting observation for the same event
                     tracked.observations.push_front(ev);
                 } else {
-                    MODALITY.quick_event_attrs(
+                    event!(
                         "new_tracked_event",
                         [kv("event.tracked_event_id", self.next_event_id as i64)],
                     );
@@ -323,7 +326,7 @@ impl<'a> SimulationComponent<'a> for SynthesisSubsystem {
             self.tracked_events.retain(|tracked| {
                 let should_keep = !tracked.observations.is_empty();
                 if !should_keep {
-                    MODALITY.quick_event_attrs(
+                    event!(
                         "expire_tracked_event",
                         [kv("event.tracked_event_id", tracked.id as i64)],
                     );
@@ -333,11 +336,14 @@ impl<'a> SimulationComponent<'a> for SynthesisSubsystem {
 
             let next_report_time = self.last_report_time + self.config.report_interval;
             if next_report_time < rack.rtc {
-                let _ = self.synthesized_tx.try_send(GlobalIRView {
-                    rack_id: rack.id,
-                    rack_timestamp: rack.rtc,
-                    events: self.tracked_events.clone(),
-                });
+                let _ = try_send!(
+                    &mut self.synthesized_tx,
+                    GlobalIRView {
+                        rack_id: rack.id,
+                        rack_timestamp: rack.rtc,
+                        events: self.tracked_events.clone(),
+                    }
+                );
                 self.last_report_time = rack.rtc;
             }
         }

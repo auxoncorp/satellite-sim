@@ -2,7 +2,7 @@
 //! the deterministic, single-threaded simulation environment.
 
 use crate::{
-    modality::{kv, MODALITY},
+    modality::{kv, Callsite, MODALITY},
     units::Length,
 };
 use modality_api::{AttrKey, AttrVal, TimelineId};
@@ -159,13 +159,24 @@ pub struct InnerSender<T> {
 }
 
 impl<T: TracedMessage> Sender<T> {
-    #[allow(dead_code)]
     pub fn location(&self) -> Option<NVector<f64>> {
         let inner = self.0.borrow();
         inner.loc
     }
 
     pub fn try_send(&mut self, item: T) -> Result<(), ChannelError> {
+        self.try_send_inner(None, item)
+    }
+
+    pub fn try_send_with_callsite(
+        &mut self,
+        callsite: &Callsite,
+        item: T,
+    ) -> Result<(), ChannelError> {
+        self.try_send_inner(callsite.into(), item)
+    }
+
+    fn try_send_inner(&mut self, callsite: Option<&Callsite>, item: T) -> Result<(), ChannelError> {
         let mut inner = self.0.borrow_mut();
 
         if let Some(capacity) = inner.outbox_capacity {
@@ -180,6 +191,9 @@ impl<T: TracedMessage> Sender<T> {
 
         let mut kvs = item.attrs();
         kvs.push(kv("event.nonce", nonce));
+        if let Some(cs) = callsite {
+            kvs.append(&mut cs.to_attrs());
+        }
         MODALITY.emit_event(kvs);
 
         let msg = Msg {
@@ -226,6 +240,14 @@ impl<T: TracedMessage> Receiver<T> {
     }
 
     pub fn recv(&mut self) -> Option<T> {
+        self.recv_inner(None)
+    }
+
+    pub fn recv_with_callsite(&mut self, callsite: &Callsite) -> Option<T> {
+        self.recv_inner(callsite.into())
+    }
+
+    fn recv_inner(&mut self, callsite: Option<&Callsite>) -> Option<T> {
         let mut inner = self.0.borrow_mut();
         let msg = inner.inbox.pop_front();
 
@@ -238,6 +260,9 @@ impl<T: TracedMessage> Receiver<T> {
                     AttrVal::TimelineId(Box::new(msg.sender)),
                 ),
             ]);
+            if let Some(cs) = callsite {
+                kvs.append(&mut cs.to_attrs());
+            }
             MODALITY.emit_event(kvs);
 
             Some(msg.item)
@@ -266,4 +291,20 @@ impl<T: TracedMessage> Receiver<T> {
 pub enum ChannelError {
     #[error("Queue full")]
     QueueFull,
+}
+
+#[macro_export]
+macro_rules! try_send {
+    ($sender:expr, $item:expr) => {{
+        static __CALLSITE: $crate::modality::Callsite = $crate::callsite!();
+        $crate::channel::Sender::try_send_with_callsite($sender, &__CALLSITE, $item)
+    }};
+}
+
+#[macro_export]
+macro_rules! recv {
+    ($receiver:expr) => {{
+        static __CALLSITE: $crate::modality::Callsite = $crate::callsite!();
+        $crate::channel::Receiver::recv_with_callsite($receiver, &__CALLSITE)
+    }};
 }

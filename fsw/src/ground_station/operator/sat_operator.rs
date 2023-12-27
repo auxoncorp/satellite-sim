@@ -5,10 +5,13 @@ use modality_api::TimelineId;
 
 use crate::{
     channel::{Receiver, Sender},
+    event,
     ground_station::consolidated::{OperatorAction, OperatorNotification},
     modality::{kv, MODALITY},
+    recv,
     satellite::SatCatId,
     system::{SatErrorFlag, SystemEnvironment},
+    try_send,
     units::{Time, Timestamp},
     SimulationComponent,
 };
@@ -72,12 +75,12 @@ impl<'a> SimulationComponent<'a> for SatOperator {
             kv("timeline.ground_station.name", "consolidated"),
         ]);
 
-        MODALITY.quick_event("init");
+        event!("init");
     }
 
     fn reset(&mut self, _env: &'a Self::Environment, _: &mut Self::SharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, self.wristwatch);
-        MODALITY.quick_event("reset");
+        event!("reset");
     }
 
     fn step(
@@ -90,7 +93,7 @@ impl<'a> SimulationComponent<'a> for SatOperator {
         self.wristwatch += dt;
 
         // TODO print shit so we know it's happening
-        while let Some(msg) = self.operator_notification_rx.recv() {
+        while let Some(msg) = recv!(&mut self.operator_notification_rx) {
             match msg {
                 OperatorNotification::SatErrorFlagStateChange(sc) => {
                     if !sc.set_flags.is_empty() && self.next_flag_clearing.is_none() {
@@ -98,7 +101,7 @@ impl<'a> SimulationComponent<'a> for SatOperator {
                     }
 
                     for flag in sc.set_flags.into_iter() {
-                        MODALITY.quick_event_attrs(
+                        event!(
                             "remembering_error_flag_to_clear_in_a_moment",
                             [
                                 kv("event.satellite.id", sc.sat),
@@ -115,9 +118,10 @@ impl<'a> SimulationComponent<'a> for SatOperator {
         if let Some(clear_time) = self.next_flag_clearing {
             if self.wristwatch > clear_time {
                 for (sat, flag) in self.flags_to_clear.drain() {
-                    let _ = self
-                        .operator_action_tx
-                        .try_send(OperatorAction::ClearSatelliteErrorFlag { sat, flag });
+                    let _ = try_send!(
+                        &mut self.operator_action_tx,
+                        OperatorAction::ClearSatelliteErrorFlag { sat, flag }
+                    );
                 }
                 self.next_flag_clearing = None;
             }

@@ -14,8 +14,11 @@ use super::{
 };
 use crate::{
     channel::{Receiver, Sender},
+    event,
     modality::{kv, MODALITY},
+    recv,
     system::SystemEnvironment,
+    try_send,
     units::{Time, Timestamp},
     SimulationComponent,
 };
@@ -73,19 +76,19 @@ impl<'a> SimulationComponent<'a> for ResultSelectionSubsystem {
             kv("timeline.ground_station.name", "consolidated"),
         ]);
 
-        MODALITY.quick_event("init");
+        event!("init");
     }
 
     fn reset(&mut self, _env: &'a Self::Environment, _: &mut Self::SharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, self.relative_rtc);
-        MODALITY.quick_event("reset");
+        event!("reset");
     }
 
     fn step(&mut self, dt: Time, _env: &SystemEnvironment<'a>, _: &mut ()) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, self.relative_rtc);
 
         self.relative_rtc += dt;
-        while let Some(msg) = self.racks_rx.recv() {
+        while let Some(msg) = recv!(&mut self.racks_rx) {
             if self
                 .pending_batch
                 .iter()
@@ -141,7 +144,7 @@ impl<'a> SimulationComponent<'a> for ResultSelectionSubsystem {
 
                 let selection = SelectedGlobalIRView { view, status };
 
-                let _ = self.selected_tx.try_send(selection);
+                let _ = try_send!(&mut self.selected_tx, selection);
             }
         }
     }

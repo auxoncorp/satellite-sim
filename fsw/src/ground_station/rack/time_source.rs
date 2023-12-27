@@ -3,6 +3,7 @@ use modality_mutator_protocol::descriptor::owned::*;
 
 use super::{RackId, RackSharedState};
 use crate::{
+    event,
     modality::{kv, MODALITY},
     mutator::GenericSetFloatMutator,
     system::SystemEnvironment,
@@ -105,23 +106,23 @@ impl<'a> SimulationComponent<'a> for TimeSourceSubsystem {
         // NB: we intentionally do this after initializing the rtc
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, rack.rtc);
         MODALITY.emit_rack_timeline_attrs("time_source", rack.id);
-        MODALITY.quick_event("init");
+        event!("init");
 
         self.init_fault_models(rack.id);
 
-        MODALITY.quick_event_attrs("gps_time_sync", [kv("event.gps_lock", self.have_gps_lock)]);
+        event!("gps_time_sync", [kv("event.gps_lock", self.have_gps_lock)]);
     }
 
     fn reset(&mut self, env: &'a Self::Environment, rack: &mut Self::SharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, rack.rtc);
-        MODALITY.quick_event("reset");
+        event!("reset");
 
         if self.enable_time_sync {
             rack.rtc = env.sim_info.timestamp;
         }
 
         self.have_gps_lock = self.enable_time_sync;
-        MODALITY.quick_event_attrs("gps_time_sync", [kv("event.gps_lock", self.have_gps_lock)]);
+        event!("gps_time_sync", [kv("event.gps_lock", self.have_gps_lock)]);
     }
 
     fn step(&mut self, dt: Time, env: &SystemEnvironment<'a>, rack: &mut RackSharedState) {
@@ -134,12 +135,12 @@ impl<'a> SimulationComponent<'a> for TimeSourceSubsystem {
         match (self.enable_time_sync, self.have_gps_lock) {
             (false, true) => {
                 self.have_gps_lock = true;
-                MODALITY.quick_event_attrs("gps_time_sync", [kv("event.gps_lock", true)]);
+                event!("gps_time_sync", [kv("event.gps_lock", true)]);
             }
 
             (true, false) => {
                 self.have_gps_lock = false;
-                MODALITY.quick_event_attrs("gps_time_sync", [kv("event.gps_lock", false)]);
+                event!("gps_time_sync", [kv("event.gps_lock", false)]);
             }
 
             _ => (),
