@@ -1,0 +1,28 @@
+behavior 'IMU subsystem status command and response'
+  when 'A command is received'
+    get_status @ imu_subsystem as cmd
+  end
+  
+  until 'The next command is received'
+    get_status @ imu_subsystem
+  end
+
+  nominal case 'IMU subsystem responds with status'
+    cmd -> imu_status @ imu_subsystem
+  end
+end
+
+behavior 'IMU subsystem samples are send every 100ms'
+  when 'A pair of samples are sent'
+    imu_sample@imu_subsystem as s1
+      ->
+    imu_sample@imu_subsystem as s2
+  end
+
+  # Occasionally we get 200ms
+  nominal case 'The second should be on-time relative to the first (±100ms)'
+    s2.timestamp - s1.timestamp <= 200 ms
+      AND
+    s2.timestamp - s1.timestamp >= 1 ms
+  end
+end

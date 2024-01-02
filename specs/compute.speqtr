@@ -1,0 +1,9 @@
+behavior 'Subsystem command and response'
+  when 'A status command is sent'
+    get_status @ cpu as cmd
+  end
+  
+  nominal case 'The subsystem replies with status'
+    cmd -> *_status @ cpu (_.name != "get_status" AND _.component = cmd.component)
+  end
+end

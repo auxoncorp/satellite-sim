@@ -1,0 +1,49 @@
+behavior 'Vision subsystem status command and response'
+  when 'A command is received'
+    get_status @ vision_subsystem as cmd
+  end
+  
+  until 'The next command is received'
+    get_status @ vision_subsystem
+  end
+
+  nominal case 'Vision subsystem responds with status'
+    cmd -> vision_status @ vision_subsystem
+  end
+end
+
+behavior 'IR event detections'
+  when 'A detections message is sent'
+    detections @ vision_subsystem as det
+  end
+  
+  until 'The next message is sent'
+    detections @ vision_subsystem
+  end
+  
+  nominal case 'Events are newly detected or have been tracked'
+    det.event_count > 0
+      AND
+    det <- * @ vision_subsystem (_.name = "tracking_ir_event" OR _.name = "detected_ir_event")
+  end
+end
+
+behavior 'Lost IR events were previously detected'
+  when 'An IR event is lost'
+    lost_ir_event @ vision_subsystem as a
+  end
+  
+  nominal case 'The event was previously detected'
+    a <- detected_ir_event @ vision_subsystem (_.source_id = a.source_id)
+  end
+end
+
+behavior 'Lost IR focus events were previously detected'
+  when 'An IR focus event is lost'
+    lost_focus @ vision_subsystem as a
+  end
+  
+  nominal case 'The event was previously detected'
+    a <- acquired_focus @ vision_subsystem (_.source_id = a.source_id)
+  end
+end

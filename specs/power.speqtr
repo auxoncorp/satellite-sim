@@ -1,0 +1,13 @@
+behavior 'Power subsystem status command and response'
+  when 'A command is received'
+    get_status @ power_subsystem as cmd
+  end
+  
+  until 'The next command is received'
+    get_status @ power_subsystem
+  end
+
+  nominal case 'Power subsystem responds with status'
+    cmd -> power_status @ power_subsystem
+  end
+end
