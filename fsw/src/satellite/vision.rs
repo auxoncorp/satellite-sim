@@ -833,6 +833,10 @@ impl ObjectTracker {
                         rel_time = rel_time.as_secs(),
                         "Tracking IR event"
                     );
+                    event!(
+                        "tracking_ir_event",
+                        gt_and_src_id_attrs(ev.ground_truth_id, *sid),
+                    );
                 })
                 .or_insert_with(|| {
                     // Newly detected, assign it an ID
