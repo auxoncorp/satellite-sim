@@ -76,8 +76,8 @@ impl<'a> SimulationComponent<'a> for IROperator {
         _env: &'a Self::Environment,
         _common_state: &mut Self::SharedState,
     ) {
-        let _timeline_guard = MODALITY.set_current_timeline(self.timeline, self.wristwatch);
         self.wristwatch += dt;
+        let _timeline_guard = MODALITY.set_current_timeline(self.timeline, self.wristwatch);
 
         // TODO print shit so we know it's happening
         while let Some(msg) = recv!(&mut self.operator_notification_rx) {

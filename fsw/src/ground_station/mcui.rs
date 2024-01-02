@@ -220,6 +220,7 @@ impl<'a> SimulationComponent<'a> for MissionControlUISubsystem {
         _common_state: &mut Self::SharedState,
     ) {
         self.relative_rtc += dt;
+        let _timeline_guard = MODALITY.set_current_timeline(self.timeline, self.relative_rtc);
 
         while let Some(msg) = recv!(&mut self.sat_telemetry_rx) {
             // Forward a copy to the external mission control stack
