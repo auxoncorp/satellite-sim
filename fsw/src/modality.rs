@@ -22,6 +22,7 @@ use url::Url;
 use crate::ground_station::RackId;
 use crate::mutator::MutatorActuatorDescriptor;
 use crate::satellite::SatelliteId;
+use crate::sim_info::SimulationInfo;
 use crate::units::Timestamp;
 
 const MUTATION_PROTOCOL_PARENT_URL_ENV_VAR: &str = "MUTATION_PROTOCOL_PARENT_URL";
@@ -93,6 +94,10 @@ struct TimelineClient {
 
     /// The actual current time within the simulator. Used to set 'event.sim.timestamp'.
     sim_time: Timestamp,
+    /// Used to set 'event.sim.step'.
+    sim_iteration: u64,
+    /// Used to set 'event.sim.fsw_step'.
+    fsw_iteration: u64,
 }
 
 #[must_use = "guard must be held to remain active"]
@@ -121,11 +126,11 @@ impl ModalityClient {
         })
     }
 
-    pub fn set_sim_time(&self, sim_time: Timestamp) {
+    pub fn set_sim_info(&self, sim_info: &SimulationInfo) {
         Self::INNER.with(|inner| {
             if let Some(inner) = inner.borrow_mut().as_mut() {
                 for client in inner.clients.values_mut().flatten() {
-                    client.set_sim_time(sim_time);
+                    client.set_sim_info(sim_info);
                 }
             }
         })
@@ -740,6 +745,8 @@ impl TimelineClient {
             run_id,
             local_time: None,
             sim_time: Timestamp::epoch(),
+            sim_iteration: 0,
+            fsw_iteration: 0,
         };
 
         // pre-declare default attributes
@@ -748,6 +755,8 @@ impl TimelineClient {
                 ("event.name".to_string(), AttrVal::Bool(false)),
                 ("event.timestamp".to_string(), AttrVal::Bool(false)),
                 ("event.sim.timestamp".to_string(), AttrVal::Bool(false)),
+                ("event.sim.step".to_string(), AttrVal::Bool(false)),
+                ("event.sim.fsw_step".to_string(), AttrVal::Bool(false)),
                 ("event.system.timestamp".to_string(), AttrVal::Bool(false)),
                 ("timeline.run_id".to_string(), AttrVal::Bool(false)),
             ])
@@ -809,10 +818,29 @@ impl TimelineClient {
             .interned_attr_keys
             .get(&"event.sim.timestamp".to_string().into())
             .expect("get event.sim.timestamp attr key, declared in connect");
-
         attrs.push((
             *sim_timestamp_key,
             AttrVal::Timestamp(self.sim_time.as_nanos().into()),
+        ));
+
+        // event.sim.step
+        let sim_step_key = self
+            .interned_attr_keys
+            .get(&"event.sim.step".to_string().into())
+            .expect("get event.sim.step attr key, declared in connect");
+        attrs.push((
+            *sim_step_key,
+            modality_api::BigInt::new_attr_val(self.sim_iteration.into()),
+        ));
+
+        // event.sim.fsw_step
+        let fsw_step_key = self
+            .interned_attr_keys
+            .get(&"event.sim.fsw_step".to_string().into())
+            .expect("get event.sim.fsw_step attr key, declared in connect");
+        attrs.push((
+            *fsw_step_key,
+            modality_api::BigInt::new_attr_val(self.fsw_iteration.into()),
         ));
 
         // event.timestamp
@@ -830,8 +858,10 @@ impl TimelineClient {
         std::mem::replace(&mut self.local_time, local_time)
     }
 
-    fn set_sim_time(&mut self, sim_time: Timestamp) {
-        self.sim_time = sim_time;
+    fn set_sim_info(&mut self, sim_info: &SimulationInfo) {
+        self.sim_time = sim_info.timestamp;
+        self.fsw_iteration = sim_info.fsw_iteration;
+        self.sim_iteration = sim_info.sim_iteration;
     }
 
     async fn emit_timeline_attrs<A, K, V>(&mut self, attributes: A) -> Result<(), IngestError>

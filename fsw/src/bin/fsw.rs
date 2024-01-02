@@ -189,7 +189,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Just a sanity check in case the msg reader misses a msg
         let new_t = Timestamp::from_utc(telem.timestamp);
-        MODALITY.set_sim_time(new_t);
         if let Some(t) = last_t {
             let dt = new_t - t;
             if dt.as_millis() as i64 != 10_000 {
@@ -210,6 +209,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let dt = (new_t - t) / STEP_SUBSAMPLING;
                 for subsample_idx in 0..(STEP_SUBSAMPLING - 1) {
                     sim_info.fsw_step(dt);
+
+                    MODALITY.set_sim_info(&sim_info);
 
                     let env = SystemEnvironment {
                         sim_info: &sim_info,
