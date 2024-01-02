@@ -127,6 +127,7 @@ pub struct ComputeStatus {
 
 impl ComputeStatus {
     pub fn to_attrs(&self, b: &mut AttrsBuilder) {
+        b.kv("event.component", ComputeSubsystem::COMPONENT_NAME);
         b.kv("temperature", self.temperature.as_degrees_celsius());
         b.kv("error.out_of_sync", self.error_register.out_of_sync);
     }

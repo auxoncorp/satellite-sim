@@ -181,6 +181,11 @@ impl<T: TracedMessage> Sender<T> {
 
         if let Some(capacity) = inner.outbox_capacity {
             if inner.outbox.len() >= capacity {
+                let mut kvs = vec![];
+                if let Some(cs) = callsite {
+                    kvs.append(&mut cs.to_attrs());
+                }
+                MODALITY.quick_event_attrs("queue_full", kvs);
                 return Err(ChannelError::QueueFull);
             }
         }
@@ -191,6 +196,7 @@ impl<T: TracedMessage> Sender<T> {
 
         let mut kvs = item.attrs();
         kvs.push(kv("event.nonce", nonce));
+        kvs.push(kv("event.channel.send", true));
         if let Some(cs) = callsite {
             kvs.append(&mut cs.to_attrs());
         }
@@ -259,6 +265,7 @@ impl<T: TracedMessage> Receiver<T> {
                     "event.interaction.remote_timeline_id",
                     AttrVal::TimelineId(Box::new(msg.sender)),
                 ),
+                kv("event.channel.recv", true),
             ]);
             if let Some(cs) = callsite {
                 kvs.append(&mut cs.to_attrs());

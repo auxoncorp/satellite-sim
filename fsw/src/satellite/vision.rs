@@ -171,9 +171,13 @@ pub enum VisionCommand {
 impl TracedMessage for VisionCommand {
     fn attrs(&self) -> Vec<(modality_api::AttrKey, modality_api::AttrVal)> {
         match self {
-            VisionCommand::GetStatus => vec![kv("event.name", "get_status")],
+            VisionCommand::GetStatus => vec![
+                kv("event.name", "get_status"),
+                kv("event.component", VisionSubsystem::COMPONENT_NAME),
+            ],
             VisionCommand::PrioritizeIrEvent(source_id) => {
                 let mut kvs = vec![
+                    kv("event.component", VisionSubsystem::COMPONENT_NAME),
                     kv("event.name", "prioritize_ir_event"),
                     kv("event.source_type", source_id.source_type()),
                 ];
@@ -197,6 +201,7 @@ impl TracedMessage for VisionResponse {
             VisionResponse::Status(vision_status) => {
                 let mut b = AttrsBuilder::new();
                 b.kv("event.name", "vision_status");
+                b.kv("event.component", VisionSubsystem::COMPONENT_NAME);
                 b.with_prefix("event", |b| vision_status.to_attrs(b));
                 b.build()
             }
@@ -619,7 +624,7 @@ impl<'a> SimulationComponent<'a> for VisionSubsystem {
             .and_then(|(gt, _)| detection_events.iter().find(|ev| ev.ground_truth_id == gt));
 
         // Set the focus camera to track the most intense object in the scanner FOV (if one exists)
-        if let Some(most_intense_scanner_event) = detection_events.get(0) {
+        if let Some(most_intense_scanner_event) = detection_events.first() {
             // If the gimbal failure is not active
             if !self
                 .focus_camera_gimbal

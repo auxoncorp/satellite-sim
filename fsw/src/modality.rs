@@ -124,9 +124,9 @@ impl ModalityClient {
     pub fn set_sim_time(&self, sim_time: Timestamp) {
         Self::INNER.with(|inner| {
             if let Some(inner) = inner.borrow_mut().as_mut() {
-                inner.with_current_timeline_client(|client| async {
+                for client in inner.clients.values_mut().flatten() {
                     client.set_sim_time(sim_time);
-                });
+                }
             }
         })
     }

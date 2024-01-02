@@ -341,7 +341,10 @@ impl TracedMessage for PowerCommand {
     fn attrs(&self) -> Vec<(modality_api::AttrKey, modality_api::AttrVal)> {
         match self {
             PowerCommand::GetStatus => {
-                vec![kv("event.name", "get_status")]
+                vec![
+                    kv("event.name", "get_status"),
+                    kv("event.component", PowerSubsystem::COMPONENT_NAME),
+                ]
             }
         }
     }
@@ -358,6 +361,7 @@ impl TracedMessage for PowerResponse {
             PowerResponse::Status(power_status) => {
                 let mut b = AttrsBuilder::new();
                 b.kv("event.name", "power_status");
+                b.kv("event.component", PowerSubsystem::COMPONENT_NAME);
                 b.with_prefix("event.power", |b| power_status.to_attrs(b));
                 b.build()
             }
