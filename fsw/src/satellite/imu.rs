@@ -482,42 +482,44 @@ impl<'a> SimulationComponent<'a> for ImuSubsystem {
             let _ = try_send!(&mut self.sample_tx, sample);
         }
 
-        if let Some(cmd) = recv!(&mut self.cmd_rx) {
-            match cmd {
-                ImuCommand::GetStatus => {
-                    let _ = try_send!(
-                        &mut self.res_tx,
-                        ImuResponse::Status(ImuStatus {
-                            temperature: self.temp_sensor.temperature(),
-                            error_register: self.error_register,
-                        })
-                    );
-                }
-                ImuCommand::Reset => {
-                    self.soft_reset(env.sim_info.relative_time);
-
-                    let _ = try_send!(
-                        &mut self.res_tx,
-                        ImuResponse::Status(ImuStatus {
-                            temperature: self.temp_sensor.temperature(),
-                            error_register: self.error_register,
-                        })
-                    );
-                }
-                ImuCommand::ClearDataInconsistency => {
-                    self.error_register.data_inconsistency = false;
-
-                    if let Some(pf) = self.data_inconsistency.as_mut() {
-                        pf.reset();
+        if !self.error_register.out_of_sync {
+            if let Some(cmd) = recv!(&mut self.cmd_rx) {
+                match cmd {
+                    ImuCommand::GetStatus => {
+                        let _ = try_send!(
+                            &mut self.res_tx,
+                            ImuResponse::Status(ImuStatus {
+                                temperature: self.temp_sensor.temperature(),
+                                error_register: self.error_register,
+                            })
+                        );
                     }
+                    ImuCommand::Reset => {
+                        self.soft_reset(env.sim_info.relative_time);
 
-                    let _ = try_send!(
-                        &mut self.res_tx,
-                        ImuResponse::Status(ImuStatus {
-                            temperature: self.temp_sensor.temperature(),
-                            error_register: self.error_register,
-                        })
-                    );
+                        let _ = try_send!(
+                            &mut self.res_tx,
+                            ImuResponse::Status(ImuStatus {
+                                temperature: self.temp_sensor.temperature(),
+                                error_register: self.error_register,
+                            })
+                        );
+                    }
+                    ImuCommand::ClearDataInconsistency => {
+                        self.error_register.data_inconsistency = false;
+
+                        if let Some(pf) = self.data_inconsistency.as_mut() {
+                            pf.reset();
+                        }
+
+                        let _ = try_send!(
+                            &mut self.res_tx,
+                            ImuResponse::Status(ImuStatus {
+                                temperature: self.temp_sensor.temperature(),
+                                error_register: self.error_register,
+                            })
+                        );
+                    }
                 }
             }
         }

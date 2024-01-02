@@ -315,6 +315,7 @@ impl<'a> SimulationComponent<'a> for ComputeSubsystem {
         if self.error_register.out_of_sync {
             warn!("Detected compute watchdog, triggering hard reset");
             sat.reset_flags.reset_all();
+            return;
         }
 
         if let Some(vision_detections) = vision_detections.take() {

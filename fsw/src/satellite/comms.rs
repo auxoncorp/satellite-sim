@@ -579,10 +579,10 @@ impl<'a> SimulationComponent<'a> for CommsSubsystem {
         self.sat_to_ground.set_location(gps_nvec);
         self.ground_to_sat.set_location(gps_nvec);
 
-        if let Some(msg) = recv!(&mut self.cmd_rx) {
-            match msg {
-                CommsCommand::SendGroundMessage(msg) => {
-                    if !self.error_register.out_of_sync {
+        if !self.error_register.out_of_sync {
+            if let Some(msg) = recv!(&mut self.cmd_rx) {
+                match msg {
+                    CommsCommand::SendGroundMessage(msg) => {
                         if ground_trx_partially_offline {
                             if self.maybe_corrupt_msg(corrupt_chance) {
                                 warn!(seq = msg.seq, "Dropping corrupt message");
@@ -593,9 +593,7 @@ impl<'a> SimulationComponent<'a> for CommsSubsystem {
                             let _ = try_send!(&mut self.sat_to_ground, *msg);
                         }
                     }
-                }
-                CommsCommand::GetGps => {
-                    if !self.error_register.out_of_sync {
+                    CommsCommand::GetGps => {
                         if gps_offline {
                             let _ = try_send!(
                                 &mut self.res_tx,
@@ -606,25 +604,25 @@ impl<'a> SimulationComponent<'a> for CommsSubsystem {
                                 try_send!(&mut self.res_tx, CommsResponse::GpsPosition(gps_nvec));
                         }
                     }
-                }
-                CommsCommand::GetStatus => {
-                    let _ = try_send!(
-                        &mut self.res_tx,
-                        CommsResponse::Status(CommsStatus {
-                            temperature: self.temp_sensor.temperature(),
-                            error_register: self.error_register,
-                        })
-                    );
+                    CommsCommand::GetStatus => {
+                        let _ = try_send!(
+                            &mut self.res_tx,
+                            CommsResponse::Status(CommsStatus {
+                                temperature: self.temp_sensor.temperature(),
+                                error_register: self.error_register,
+                            })
+                        );
+                    }
                 }
             }
-        }
 
-        while let Some(msg) = recv!(&mut self.ground_to_sat) {
-            if msg.inner.destination() == sat.id.satcat_id {
-                let _ = try_send!(
-                    &mut self.res_tx,
-                    CommsResponse::RecvGroundMessage(msg.inner)
-                );
+            while let Some(msg) = recv!(&mut self.ground_to_sat) {
+                if msg.inner.destination() == sat.id.satcat_id {
+                    let _ = try_send!(
+                        &mut self.res_tx,
+                        CommsResponse::RecvGroundMessage(msg.inner)
+                    );
+                }
             }
         }
     }

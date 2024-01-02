@@ -467,20 +467,22 @@ impl<'a> SimulationComponent<'a> for PowerSubsystem {
             sat.power_supply_voltage = self.battery_voltage;
         }
 
-        if let Some(cmd) = recv!(&mut self.cmd_rx) {
-            match cmd {
-                PowerCommand::GetStatus => {
-                    let _ = try_send!(
-                        &mut self.res_tx,
-                        PowerResponse::Status(PowerStatus {
-                            battery_charge: self.battery_charge,
-                            battery_charge_ratio: self.battery_charge
-                                / self.config.battery_max_charge,
-                            solar_panel_illumination: illumination,
-                            temperature: self.temp_sensor.temperature(),
-                            error_register: self.error_register,
-                        })
-                    );
+        if !self.error_register.out_of_sync {
+            if let Some(cmd) = recv!(&mut self.cmd_rx) {
+                match cmd {
+                    PowerCommand::GetStatus => {
+                        let _ = try_send!(
+                            &mut self.res_tx,
+                            PowerResponse::Status(PowerStatus {
+                                battery_charge: self.battery_charge,
+                                battery_charge_ratio: self.battery_charge
+                                    / self.config.battery_max_charge,
+                                solar_panel_illumination: illumination,
+                                temperature: self.temp_sensor.temperature(),
+                                error_register: self.error_register,
+                            })
+                        );
+                    }
                 }
             }
         }

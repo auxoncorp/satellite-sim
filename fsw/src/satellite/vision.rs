@@ -532,6 +532,7 @@ impl<'a> SimulationComponent<'a> for VisionSubsystem {
                 gui.remove_satellite_scanner_camera(sat.id.satcat_id);
                 gui.remove_satellite_focus_camera(sat.id.satcat_id);
             }
+            return;
         }
 
         // Downsample to update_interval for IR event tracking/updates
