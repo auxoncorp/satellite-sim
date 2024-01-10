@@ -1,0 +1,51 @@
+behavior 'sensor stats have all required properties'
+    when 'sensor stats are observed'
+        SENSOR_STATS@*(_.port.output = true) as stats
+    end
+
+    nominal case 'all required properties are present'
+        exists(stats.crc_errors) and
+        exists(stats.current_delta.0) and
+        exists(stats.current_delta.1) and
+        exists(stats.current_delta.2) and
+        exists(stats.current_delta.3) and
+        exists(stats.current_delta.4) and
+        exists(stats.max_delta.0) and
+        exists(stats.max_delta.1) and
+        exists(stats.max_delta.2) and
+        exists(stats.max_delta.3) and
+        exists(stats.max_delta.4) and
+        exists(stats.mean_delta.0) and
+        exists(stats.mean_delta.1) and
+        exists(stats.mean_delta.2) and
+        exists(stats.mean_delta.3) and
+        exists(stats.mean_delta.4) and
+        exists(stats.min_delta.0) and
+        exists(stats.min_delta.1) and
+        exists(stats.min_delta.2) and
+        exists(stats.min_delta.3) and
+        exists(stats.min_delta.4) and
+        exists(stats.standard_deviation_delta.0) and
+        exists(stats.standard_deviation_delta.1) and
+        exists(stats.standard_deviation_delta.2) and
+        exists(stats.standard_deviation_delta.3) and
+        exists(stats.standard_deviation_delta.4) and
+        exists(stats.sensor_id) and
+        exists(stats.time_delta_cur) and
+        exists(stats.time_delta_max) and
+        exists(stats.time_delta_mean) and
+        exists(stats.time_delta_min) and
+        exists(stats.time_delta_standard_deviation)
+    end
+end
+
+behavior 'sensor stats time_delta_cur is accurate'
+    when 'two sensor stats are observed'
+        SENSOR_STATS@*(_.port.output = true) as s1 -> SENSOR_STATS@*(_.port.output = true and _.timeline.id = s1.timeline.id)
+    end
+
+    # This fails, since we dont currently have a good timestamp mapping
+    nominal case 'distance between the timestamps equals time_delta_cur from the second'
+        s2.time_delta_cur * 1000000000 = s2.timestamp - s1.timestamp
+    end
+end

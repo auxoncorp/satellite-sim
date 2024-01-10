@@ -1,0 +1,20 @@
+# @author = "auxon"
+# @project = "NVIDIA NDAS"
+
+behavior 'processed images are sent from the fisheye camera node to further processing nodes'
+    when 'image is processed'
+        IMAGE_NATIVE_PROCESSED@top.fisheyeCameraSensor?.cameraNode as img
+    end
+
+    nominal case 'reuslt is sent to the corresponding isp node'
+        img -> within 10ms IMAGE@top.fisheyeCameraSensor?.ispNode(_.timeline.ns2 = img.timeline.ns2)
+    end
+
+    nominal case 'reuslt is sent to the visualization node'
+        img -> within 10ms "ISP_IMAGE[5]"@top.visualization.surroundViewSystem.svsIspInputNode
+    end
+
+    nominal case 'reuslt is sent to the obstacle classifier node'
+        img -> within 10ms "IMAGE[11]"@top.obstacles.obstaclePerceptionCamera.dynamicObstacleClassifierNode
+    end
+end

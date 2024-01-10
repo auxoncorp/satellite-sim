@@ -1,0 +1,38 @@
+# Local behaviors for actuationSupervisorNode
+
+behavior 'Receive ASIL state every 10 minutes'
+    when 'A pair of ASIL state msgs are received'
+       VEHICLE_IO_ASIL_STATE@top.planningAndControl.controls.controlSafety.actuationSupervisorNode as asil1
+         followed by
+       VEHICLE_IO_ASIL_STATE@top.planningAndControl.controls.controlSafety.actuationSupervisorNode as asil2
+    end
+
+   nominal case 'They happened within 10 minutes'
+      asil2.timestamp - asil1.timestamp <= 10 minutes
+   end
+end
+
+behavior 'QM state always follows ASIL state'
+    when 'Receive ASIL state msg'
+       VEHICLE_IO_ASIL_STATE@top.planningAndControl.controls.controlSafety.actuationSupervisorNode as asil
+    end
+
+   # I tried 20, but it seems to be right on the edge
+   nominal case 'Also receive a QM state msg, very soon after'
+      asil
+         followed by within 30 s
+      VEHICLE_IO_QM_STATE@top.planningAndControl.controls.controlSafety.actuationSupervisorNode
+   end
+end
+
+behavior 'QM state always preceded by ASIL state'
+    when 'Receive QM state msg'
+      VEHICLE_IO_QM_STATE@top.planningAndControl.controls.controlSafety.actuationSupervisorNode  as qm
+    end
+
+    nominal case 'Preceded by an ASIL state, soon before'
+      qm
+         preceded by within 30 s
+      VEHICLE_IO_ASIL_STATE@top.planningAndControl.controls.controlSafety.actuationSupervisorNode as asil
+    end
+end

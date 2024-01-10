@@ -1,0 +1,20 @@
+behavior 'processed images are sent from the camera node to its isp node'
+    when 'image is processed'
+        IMAGE_NATIVE_PROCESSED@top.cameraSensor?.cameraNode as img
+    end
+
+    nominal case 'result is sent to the corresponding isp node and to the parent'
+        img -> within 10ms IMAGE@top.cameraSensor?.ispNode(_.timeline.ns2 = img.timeline.ns2) and
+        img -> within 10ms CUDA_PROCESSED@top.cameraSensor?(_.timeline.ns2 = img.timeline.ns2)
+    end
+end
+
+behavior 'sensor stats are sent from the camera node to the parent'
+    when 'sensor stats are observed'
+        SENSOR_STATS@top.cameraSensor?.cameraNode as stats
+    end
+
+    nominal case 'result is sent to the parent'
+        stats -> within 10ms SENSOR_STATS@top.cameraSensor?(_.timeline.ns2 = stats.timeline.ns2)
+    end
+end

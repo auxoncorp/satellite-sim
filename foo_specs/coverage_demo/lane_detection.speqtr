@@ -1,0 +1,24 @@
+# @author = "auxon"
+# @project = "NVIDIA NDAS"
+
+behavior 'lane detection communications'
+  when 'the landmark tracker receives a new LANES message'
+    LANES@top.road.cameraLandmarkPerception.landmarkTrackerNode(_.port.input) as lanes
+  end
+
+  until 'the next LANES message'
+    LANES@top.road.cameraLandmarkPerception.landmarkTrackerNode(_.port.input)
+  end
+
+  nominal case 'the landmark tracker node receives the message'
+    lanes -> LANDMARK@top.road.cameraLandmarkPerception.landmarkTrackerNode
+  end
+
+  nominal case 'a road separation message is published'
+    lanes -> ROAD_SEPARATION@top.road.cameraLandmarkPerception.landmarkTrackerNode
+  end
+
+  nominal case 'the road cast (low-freq-one) receives the message'
+    lanes -> "DW_LANE_DETECTION[0]"@top.roadCastNodeLowFreqOne
+  end
+end

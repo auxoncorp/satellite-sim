@@ -1,0 +1,36 @@
+# @author = "auxon"
+# @project = "NVIDIA NDAS"
+
+# Trajectory planner result messages for example should arrive at a given frequency (meaning for example
+# “top.planningAndControl.avPlanner.behaviorPlannerNode.PATH_RESULT” emit
+# messages with at least 30 Hz at any point in time).
+behavior 'PATH_RESULT is received at frequency 30hz or faster (constructive version)'
+    when 'a pair of PATH_RESULT msgs is received'
+      PATH_RESULT@top.planningAndControl.avPlanner.behaviorPlannerNode as res1
+        ->
+      PATH_RESULT@top.planningAndControl.avPlanner.behaviorPlannerNode as res2
+    end
+
+    nominal case 'the second should be on-time relative to the first'
+      res2.timestamp - res1.timestamp < 66.7 ms
+    end
+end
+
+# For sensor preprocessing, data should be processed on time. Whenever there is a
+# message in e.g., “top.cameraSensor3.cameraNode.IMAGE_NATIVE_PROCESSED”, there
+# should be a message in “top.cameraPreprocessing3.featureDetectorNode.FEATURE_ARRAY_GPU”.
+# This should be very close together.
+behavior 'for sensor preprocessing, data should be processed on time'
+  when 'there is an image processed message from a camera'
+    IMAGE_NATIVE_PROCESSED@top.cameraSensor?.cameraNode as img
+  end
+
+  until 'the next image is processed'
+    IMAGE_NATIVE_PROCESSED@top.cameraSensor?.cameraNode(_.timeline.name = img.timeline.name) as next_img
+  end
+
+  nominal case 'there should be a message in the corresponding feature processing unit'
+    img -> within 10ms
+    FEATURE_ARRAY_GPU@top.cameraPreprocessing?.featureDetectorNode(_.timeline.node_num = img.timeline.node_num)
+  end
+end

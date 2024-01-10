@@ -1,0 +1,19 @@
+behavior 'sensor properties are sent from gpsNode to its parent'
+    when 'sensor properties are observed'
+        SENSOR_PROPERTIES@top.gpsSensor.gpsNode as props
+    end
+
+    nominal case 'they are sent to the parent node'
+        props -> within 10ms GPS_SENSOR_PROPERTIES@top.gpsSensor
+    end
+end
+
+behavior 'timestamp is relayed from gpsNode to its parent'
+    when 'gps timestamp is observed'
+        NEXT_TIMESTAMP@top.gpsSensor.gpsNode as ts
+    end
+
+    nominal case 'it is sent to the parent node'
+        GPS_NEXT_TIMESTAMP@top.gpsSensor
+    end
+end

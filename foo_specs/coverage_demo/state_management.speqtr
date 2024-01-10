@@ -1,0 +1,34 @@
+# @author = "auxon"
+# @project = "NVIDIA NDAS"
+
+behavior 'system state change processing'
+  when 'The system requests a state change'
+    "STATE_CHANGE_REQ[0]"@top.modesAndDegradations.systemStateManager.ssmNode as req
+  end
+
+  until 'the next state change'
+    "STATE_CHANGE_REQ[0]"@top.modesAndDegradations.systemStateManager.ssmNode
+  end
+
+  nominal case 'the acknowledgement and readiness message should follow shortly'
+    req -> within 10ms
+    "STATE_CHANGE_ACK[0]"@top.modesAndDegradations.systemStateManager.ssmNode -> within 10ms
+    "CLIENT_READINESS[0]"@top.modesAndDegradations.systemStateManager.ssmNode
+  end
+end
+
+behavior 'CLIENT_ENTITY state is published upon receiving IO ASIL state and IO QM state'
+    when 'Receive ASIL state msg'
+       VEHICLE_IO_ASIL_STATE@top.planningAndControl.controls.controlSafety.actuationSupervisorNode as asil
+    end
+
+   nominal case 'upon receiving IO QM state, CLIENT_ENTITY state is published'
+      # Intentionally fail this, for demonstration purposes
+      false
+
+      # asil ->
+      # VEHICLE_IO_QM_STATE@top.planningAndControl.controls.controlSafety.actuationSupervisorNode ->
+      # CLIENT_ENTITY@top.planningAndControl.controls.controlSafety.actuationSupervisorNode
+   end
+end
+
