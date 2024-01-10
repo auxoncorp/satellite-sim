@@ -276,9 +276,18 @@ pub enum CommsCommand {
 impl TracedMessage for CommsCommand {
     fn attrs(&self) -> Vec<(modality_api::AttrKey, modality_api::AttrVal)> {
         match self {
-            CommsCommand::SendGroundMessage(_) => vec![kv("event.name", "send_ground_message")],
-            CommsCommand::GetGps => vec![kv("event.name", "get_gps")],
-            CommsCommand::GetStatus => vec![kv("event.name", "get_status")],
+            CommsCommand::SendGroundMessage(_) => vec![
+                kv("event.name", "send_ground_message"),
+                kv("event.component", CommsSubsystem::COMPONENT_NAME),
+            ],
+            CommsCommand::GetGps => vec![
+                kv("event.name", "get_gps"),
+                kv("event.component", CommsSubsystem::COMPONENT_NAME),
+            ],
+            CommsCommand::GetStatus => vec![
+                kv("event.name", "get_status"),
+                kv("event.component", CommsSubsystem::COMPONENT_NAME),
+            ],
         }
     }
 }
@@ -295,6 +304,7 @@ pub enum CommsResponse {
 impl TracedMessage for CommsResponse {
     fn attrs(&self) -> Vec<(modality_api::AttrKey, modality_api::AttrVal)> {
         let mut b = AttrsBuilder::new();
+        b.kv("event.component", CommsSubsystem::COMPONENT_NAME);
         match self {
             CommsResponse::RecvGroundMessage(msg) => {
                 b.kv("event.name", "recv_ground_message");

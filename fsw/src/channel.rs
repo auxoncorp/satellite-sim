@@ -180,6 +180,7 @@ impl<T: TracedMessage> Sender<T> {
 
         let mut kvs = item.attrs();
         kvs.push(kv("event.nonce", nonce));
+        kvs.push(kv("event.channel.send", true));
         MODALITY.emit_event(kvs);
 
         let msg = Msg {
@@ -237,6 +238,7 @@ impl<T: TracedMessage> Receiver<T> {
                     "event.interaction.remote_timeline_id",
                     AttrVal::TimelineId(Box::new(msg.sender)),
                 ),
+                kv("event.channel.recv", true),
             ]);
             MODALITY.emit_event(kvs);
 

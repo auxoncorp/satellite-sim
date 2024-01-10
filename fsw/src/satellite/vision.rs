@@ -131,9 +131,13 @@ pub enum VisionCommand {
 impl TracedMessage for VisionCommand {
     fn attrs(&self) -> Vec<(modality_api::AttrKey, modality_api::AttrVal)> {
         match self {
-            VisionCommand::GetStatus => vec![kv("event.name", "get_status")],
+            VisionCommand::GetStatus => vec![
+                kv("event.name", "get_status"),
+                kv("event.component", VisionSubsystem::COMPONENT_NAME),
+            ],
             VisionCommand::PrioritizeIrEvent(source_id) => {
                 let mut kvs = vec![
+                    kv("event.component", VisionSubsystem::COMPONENT_NAME),
                     kv("event.name", "prioritize_ir_event"),
                     kv("event.source_type", source_id.source_type()),
                 ];
@@ -157,6 +161,7 @@ impl TracedMessage for VisionResponse {
             VisionResponse::Status(vision_status) => {
                 let mut b = AttrsBuilder::new();
                 b.kv("event.name", "vision_status");
+                b.kv("event.component", VisionSubsystem::COMPONENT_NAME);
                 b.with_prefix("event", |b| vision_status.to_attrs(b));
                 b.build()
             }

@@ -154,10 +154,19 @@ pub enum ImuCommand {
 impl TracedMessage for ImuCommand {
     fn attrs(&self) -> Vec<(modality_api::AttrKey, modality_api::AttrVal)> {
         match self {
-            ImuCommand::GetStatus => vec![kv("event.name", "get_status")],
-            ImuCommand::Reset => vec![kv("event.name", "reset")],
+            ImuCommand::GetStatus => vec![
+                kv("event.name", "get_status"),
+                kv("event.component", ImuSubsystem::COMPONENT_NAME),
+            ],
+            ImuCommand::Reset => vec![
+                kv("event.name", "reset"),
+                kv("event.component", ImuSubsystem::COMPONENT_NAME),
+            ],
             ImuCommand::ClearDataInconsistency => {
-                vec![kv("event.name", "clear_data_inconsistency")]
+                vec![
+                    kv("event.name", "clear_data_inconsistency"),
+                    kv("event.component", ImuSubsystem::COMPONENT_NAME),
+                ]
             }
         }
     }
@@ -173,7 +182,8 @@ impl TracedMessage for ImuResponse {
         match self {
             ImuResponse::Status(imu_status) => {
                 let mut b = AttrsBuilder::new();
-                b.kv("event.name", "get_status");
+                b.kv("event.name", "imu_status");
+                b.kv("event.component", ImuSubsystem::COMPONENT_NAME);
                 b.with_prefix("event", |b| imu_status.to_attrs(b));
                 b.build()
             }
