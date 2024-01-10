@@ -194,7 +194,7 @@ impl TracedMessage for ImuCommand {
                 kv("event.component", ImuSubsystem::COMPONENT_NAME),
             ],
             ImuCommand::Reset => vec![
-                kv("event.name", "reset"),
+                kv("event.name", "reset_imu"),
                 kv("event.component", ImuSubsystem::COMPONENT_NAME),
             ],
             ImuCommand::ClearDataInconsistency => {
