@@ -72,12 +72,17 @@ impl<T: Copy + PartialOrd + std::fmt::Debug> PointFailure<T> {
     {
         self.context = context
             .into_iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .map(|(k, v)| {
+                let normalized_key = if k == "name" { "point_failure.name" } else { k };
+                (normalized_key.to_string(), v.to_string())
+            })
             .collect();
     }
 
     pub fn add_context(&mut self, k: &str, v: &str) {
-        self.context.insert(k.to_string(), v.to_string());
+        let normalized_key = if k == "name" { "point_failure.name" } else { k };
+        self.context
+            .insert(normalized_key.to_string(), v.to_string());
     }
 
     pub fn config(&self) -> &PointFailureConfig<T> {
