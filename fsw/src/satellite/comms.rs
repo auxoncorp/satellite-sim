@@ -496,6 +496,17 @@ impl CommsConfig {
         self.fault_config = fault_config;
         self
     }
+
+    pub fn with_all_mutators_enabled(mut self, enable_all_mutators: Option<bool>) -> Self {
+        if enable_all_mutators.unwrap_or(false) {
+            self.fault_config.gps_offline_rtc_drift = true;
+            self.fault_config.gps_offline = true;
+            self.fault_config.ground_transceiver_failure = true;
+            self.fault_config.ground_transceiver_partial_failure = true;
+            self.fault_config.watchdog_out_of_sync = true;
+        }
+        self
+    }
 }
 
 impl<'a> SimulationComponent<'a> for CommsSubsystem {

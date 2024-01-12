@@ -65,23 +65,29 @@ impl Scenario {
             // So that each satellite has slightly different initial conditions
             let mut prng = Rand64::new((opts.config_prng_seed.unwrap_or(0) + sat_idx).into());
             let apply_variance = cfg.apply_variance.unwrap_or(true);
+            let enable_all_mutators = cfg.enable_all_mutators(sat);
 
             let sat_cfg = SatelliteConfig {
                 id: sat,
                 power_config: cfg.power_config(sat, &mut prng).unwrap_or_else(|| {
                     PowerConfig::nominal(sat, apply_variance.then_some(&mut prng))
+                        .with_all_mutators_enabled(enable_all_mutators)
                 }),
                 compute_config: cfg.compute_config(sat, &mut prng).unwrap_or_else(|| {
                     ComputeConfig::nominal(sat, apply_variance.then_some(&mut prng))
+                        .with_all_mutators_enabled(enable_all_mutators)
                 }),
                 comms_config: cfg.comms_config(sat, &mut prng).unwrap_or_else(|| {
                     CommsConfig::nominal(sat, apply_variance.then_some(&mut prng))
+                        .with_all_mutators_enabled(enable_all_mutators)
                 }),
                 vision_config: cfg.vision_config(sat, &mut prng).unwrap_or_else(|| {
                     VisionConfig::nominal(sat, apply_variance.then_some(&mut prng))
+                        .with_all_mutators_enabled(enable_all_mutators)
                 }),
                 imu_config: cfg.imu_config(sat, &mut prng).unwrap_or_else(|| {
                     ImuConfig::nominal(sat, apply_variance.then_some(&mut prng))
+                        .with_all_mutators_enabled(enable_all_mutators)
                 }),
             };
             satellite_configs.insert(sat_idx, sat_cfg);

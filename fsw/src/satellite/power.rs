@@ -330,6 +330,15 @@ impl PowerConfig {
         self.fault_config = fault_config;
         self
     }
+
+    pub fn with_all_mutators_enabled(mut self, enable_all_mutators: Option<bool>) -> Self {
+        if enable_all_mutators.unwrap_or(false) {
+            self.fault_config.solar_panel_degraded = true;
+            self.fault_config.watchdog_out_of_sync = true;
+            self.fault_config.constant_temperature = true;
+        }
+        self
+    }
 }
 
 #[derive(Debug, Clone)]

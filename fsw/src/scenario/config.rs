@@ -167,6 +167,11 @@ impl Config {
         self.satellites.iter().find(|s| s.matches_satellite(id))
     }
 
+    pub(crate) fn enable_all_mutators(&self, id: &SatelliteId) -> Option<bool> {
+        let sat_enable_all_muts = self.satellite(id).and_then(|s| s.enable_all_mutators);
+        self.enable_all_mutators.or(sat_enable_all_muts)
+    }
+
     fn temperature_sensor(&self, name: &str) -> Option<&TemperatureSensor> {
         self.temperature_sensors.iter().find(|t| t.name == name)
     }
@@ -223,7 +228,12 @@ impl Config {
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
                     .unwrap_or(enable_all_mutators),
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| power::PowerFaultConfig {
+                solar_panel_degraded: enable_all_mutators,
+                battery_degraded: None,
+                watchdog_out_of_sync: enable_all_mutators,
+                constant_temperature: enable_all_mutators,
+            });
 
         let ncfg = power::PowerConfig::nominal(id, apply_variance.then_some(prng))
             .with_fault_config(fault_config);
@@ -295,7 +305,10 @@ impl Config {
                     .as_ref()
                     .map(|f| self.point_failure(f).map(|fc| fc.into()).unwrap()),
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| compute::ComputeFaultConfig {
+                watchdog_out_of_sync: enable_all_mutators,
+                telemetry_timer_degraded: None,
+            });
 
         let ncfg = compute::ComputeConfig::nominal(id, apply_variance.then_some(prng))
             .with_fault_config(fault_config);
@@ -376,7 +389,15 @@ impl Config {
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
                     .unwrap_or(enable_all_mutators),
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| comms::CommsFaultConfig {
+                rng_seed: 0,
+                gps_offline_rtc_drift: enable_all_mutators,
+                gps_offline: enable_all_mutators,
+                ground_transceiver_failure: enable_all_mutators,
+                ground_transceiver_partial_failure: enable_all_mutators,
+                rtc_degraded: None,
+                watchdog_out_of_sync: enable_all_mutators,
+            });
 
         let ncfg = comms::CommsConfig::nominal(id, apply_variance.then_some(prng))
             .with_fault_config(fault_config);
@@ -440,7 +461,13 @@ impl Config {
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
                     .unwrap_or(enable_all_mutators),
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| vision::VisionFaultConfig {
+                active_cooling: None,
+                scanner_camera_offline: None,
+                focus_camera_offline: None,
+                focus_camera_gimbal: None,
+                watchdog_out_of_sync: enable_all_mutators,
+            });
 
         let ncfg = vision::VisionConfig::nominal(id, apply_variance.then_some(prng))
             .with_fault_config(fault_config);
@@ -516,7 +543,12 @@ impl Config {
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
                     .unwrap_or(enable_all_mutators),
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| imu::ImuFaultConfig {
+                degraded_state: None,
+                data_inconsistency: None,
+                watchdog_out_of_sync: enable_all_mutators,
+                constant_temperature: enable_all_mutators,
+            });
 
         let ncfg = imu::ImuConfig::nominal(id, apply_variance.then_some(prng))
             .with_fault_config(fault_config);
@@ -571,7 +603,11 @@ impl Config {
                                 .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
                                 .unwrap_or(enable_all_mutators),
                         })
-                        .unwrap_or_default(),
+                        .unwrap_or_else(|| ground_station::RelayGroundStationFaultConfig {
+                            rtc_drift: enable_all_mutators,
+                            satellite_to_cgs_delay: enable_all_mutators,
+                            cgs_to_satellite_delay: enable_all_mutators,
+                        }),
                 }
             })
             .collect()
@@ -600,7 +636,9 @@ impl Config {
                                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
                                     .unwrap_or(enable_all_mutators),
                             })
-                            .unwrap_or_default(),
+                            .unwrap_or_else(|| ground_station::TimeSourceFaultConfig {
+                                rtc_drift: enable_all_mutators,
+                            }),
                     },
                     correlation_config: ground_station::CorrelationConfig {
                         correlation_window: Time::from_secs(cfg.correlation_window),
@@ -630,7 +668,9 @@ impl Config {
                                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
                                     .unwrap_or(enable_all_mutators),
                             })
-                            .unwrap_or_default(),
+                            .unwrap_or_else(|| ground_station::SynthesisFaultConfig {
+                                rack_offline: enable_all_mutators,
+                            }),
                     },
                 },
                 result_selection_config: ground_station::ResultSelectionConfig {
