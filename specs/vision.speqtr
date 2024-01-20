@@ -4,11 +4,11 @@ behavior 'Vision subsystem status command and response'
   end
   
   until 'The next command is received'
-    get_status @ vision_subsystem
+    get_status @ vision_subsystem(_.timeline.id = cmd.timeline.id)
   end
 
   nominal case 'Vision subsystem responds with status'
-    cmd -> vision_status @ vision_subsystem
+    cmd -> vision_status @ vision_subsystem(_.timeline.id = cmd.timeline.id)
   end
 end
 
@@ -18,13 +18,13 @@ behavior 'IR event detections'
   end
   
   until 'The next message is sent'
-    detections @ vision_subsystem
+    detections @ vision_subsystem(_.timeline.id = det.timeline.id)
   end
   
   nominal case 'Events are newly detected or have been tracked'
     det.event_count > 0
       AND
-    det <- * @ vision_subsystem (_.name = "tracking_ir_event" OR _.name = "detected_ir_event")
+    det <- * @ vision_subsystem(_.timeline.id = det.timeline.id AND (_.name = "tracking_ir_event" OR _.name = "detected_ir_event"))
   end
 end
 
@@ -34,7 +34,7 @@ behavior 'Lost IR events were previously detected'
   end
   
   nominal case 'The event was previously detected'
-    a <- detected_ir_event @ vision_subsystem (_.source_id = a.source_id)
+    a <- detected_ir_event @ vision_subsystem (_.timeline.id = a.timeline.id AND _.source_id = a.source_id)
   end
 end
 
@@ -44,6 +44,6 @@ behavior 'Lost IR focus events were previously detected'
   end
   
   nominal case 'The event was previously detected'
-    a <- acquired_focus @ vision_subsystem (_.source_id = a.source_id)
+    a <- acquired_focus @ vision_subsystem (_.timeline.id = a.timeline.id AND _.source_id = a.source_id)
   end
 end

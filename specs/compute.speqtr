@@ -1,9 +1,15 @@
 behavior 'Subsystem command and response'
-  when 'A status command is sent'
+  when 'A status command is received'
     get_status @ cpu as cmd
+  end
+
+  until 'The next status'
+    get_status @ cpu(_.timeline.id = cmd.timeline.id)
   end
   
   nominal case 'The subsystem replies with status'
-    cmd -> *_status @ cpu (_.name != "get_status" AND _.component = cmd.component)
+    cmd
+      -> within 1s
+    *_status @ cpu (_.name != "get_status" AND _.component = cmd.component AND _.timeline.id = cmd.timeline.id)
   end
 end

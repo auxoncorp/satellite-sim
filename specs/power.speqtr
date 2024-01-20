@@ -4,10 +4,10 @@ behavior 'Power subsystem status command and response'
   end
   
   until 'The next command is received'
-    get_status @ power_subsystem
+    get_status @ power_subsystem(_.timeline.id = cmd.timeline.id)
   end
 
   nominal case 'Power subsystem responds with status'
-    cmd -> power_status @ power_subsystem
+    cmd -> power_status @ power_subsystem(_.timeline.id = cmd.timeline.id)
   end
 end

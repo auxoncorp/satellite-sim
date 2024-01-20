@@ -4,10 +4,10 @@ behavior 'Comms subsystem status command and response'
   end
   
   until 'The next command is received'
-    get_status @ comms_subsystem
+    get_status @ comms_subsystem(_.timeline.id = cmd.timeline.id)
   end
 
   nominal case 'Comms subsystem responds with status'
-    cmd -> comms_status @ comms_subsystem
+    cmd -> comms_status @ comms_subsystem(_.timeline.id = cmd.timeline.id)
   end
 end

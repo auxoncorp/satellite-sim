@@ -4,11 +4,11 @@ behavior 'IMU subsystem status command and response'
   end
   
   until 'The next command is received'
-    get_status @ imu_subsystem
+    get_status @ imu_subsystem(_.timeline.id = cmd.timeline.id)
   end
 
   nominal case 'IMU subsystem responds with status'
-    cmd -> imu_status @ imu_subsystem
+    cmd -> imu_status @ imu_subsystem(_.timeline.id = cmd.timeline.id)
   end
 end
 
@@ -16,7 +16,7 @@ behavior 'IMU subsystem samples are send every 100ms'
   when 'A pair of samples are sent'
     imu_sample@imu_subsystem as s1
       ->
-    imu_sample@imu_subsystem as s2
+    imu_sample@imu_subsystem(_.timeline.id = s1.timeline.id) as s2
   end
 
   # Occasionally we get 200ms
