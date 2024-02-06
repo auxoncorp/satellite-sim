@@ -310,9 +310,9 @@ impl PowerConfig {
             battery_discharge_factor: ElectricPotential::from_volts(2.0)
                 / ElectricCharge::from_amp_hours(40.0),
             solar_panel_charge_rate: if sat.is_goes() {
-                ElectricCurrent::from_milliamps(1190.0 - variance(10.0))
+                ElectricCurrent::from_milliamps(1180.0 - variance(20.0))
             } else {
-                ElectricCurrent::from_milliamps(1200.0 + variance(10.0))
+                ElectricCurrent::from_milliamps(1190.0 + variance(20.0))
             },
             system_load: if sat.is_goes() {
                 ElectricCurrent::from_milliamps(550.0 - variance(10.0))
