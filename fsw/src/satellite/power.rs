@@ -61,7 +61,11 @@ impl PowerSubsystem {
     pub const COMPONENT_NAME: &'static str = "power_subsystem";
 
     pub fn new(config: PowerConfig, rx: Receiver<PowerCommand>, tx: Sender<PowerResponse>) -> Self {
-        let battery_charge = config.battery_max_charge;
+        assert!(
+            config.battery_initial_charge.as_amp_hours()
+                <= config.battery_max_charge.as_amp_hours()
+        );
+        let battery_charge = config.battery_initial_charge;
         let battery_voltage = config.battery_max_voltage;
         let timeline = TimelineId::allocate();
         let temp_sensor = TemperatureSensor::new(config.temperature_sensor_config);
@@ -250,6 +254,7 @@ impl PowerSubsystem {
 
 #[derive(Debug, Clone)]
 pub struct PowerConfig {
+    pub battery_initial_charge: ElectricCharge,
     pub battery_max_charge: ElectricCharge,
     pub battery_max_voltage: ElectricPotential,
 
@@ -296,8 +301,11 @@ impl PowerConfig {
                 .unwrap_or(0.0)
         };
 
+        let max_charge = 40.0 - variance(5.0);
+        let initial_charge = (max_charge * 0.9) - variance(3.0).abs();
         Self {
-            battery_max_charge: ElectricCharge::from_amp_hours(40.0),
+            battery_initial_charge: ElectricCharge::from_amp_hours(initial_charge),
+            battery_max_charge: ElectricCharge::from_amp_hours(max_charge),
             battery_max_voltage: ElectricPotential::from_volts(13.1),
             battery_discharge_factor: ElectricPotential::from_volts(2.0)
                 / ElectricCharge::from_amp_hours(40.0),
@@ -519,6 +527,7 @@ mod tests {
         let mut status_ch = StepChannel::new();
 
         let config = PowerConfig {
+            battery_initial_charge: ElectricCharge::from_amp_hours(40.0),
             battery_max_charge: ElectricCharge::from_amp_hours(40.0),
             battery_max_voltage: ElectricPotential::from_volts(13.1),
             battery_discharge_factor: ElectricPotential::from_volts(2.0)

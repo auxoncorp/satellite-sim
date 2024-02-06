@@ -245,6 +245,10 @@ impl Config {
                 .map(|t| self.temperature_sensor(t).unwrap().into())
                 .unwrap_or(ncfg.temperature_sensor_config);
             Some(power::PowerConfig {
+                battery_initial_charge: ElectricCharge::from_amp_hours(
+                    cfgf.battery_initial_charge
+                        .unwrap_or_else(|| ncfg.battery_initial_charge.as_amp_hours()),
+                ),
                 battery_max_charge: ElectricCharge::from_amp_hours(
                     cfgf.battery_max_charge
                         .unwrap_or_else(|| ncfg.battery_max_charge.as_amp_hours()),
@@ -758,6 +762,7 @@ pub struct PowerSubsystem {
 #[derive(Clone, PartialEq, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct PowerFields {
+    pub battery_initial_charge: Option<f64>,
     pub battery_max_charge: Option<f64>,
     pub battery_max_voltage: Option<f64>,
     pub battery_discharge_factor: Option<f64>,
@@ -1231,6 +1236,7 @@ mod tests {
 
         [[power-subsystem]]
         name = 'power0'
+        battery-initial-charge = 2.1
         battery-max-charge = 2.2
         battery-max-voltage = 4.4
         battery-discharge-factor = 5.5

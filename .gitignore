@@ -1,3 +1,4 @@
 target
 config/*.42
 fsw/.runid
+.runid
