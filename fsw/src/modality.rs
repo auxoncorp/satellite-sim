@@ -959,20 +959,25 @@ pub enum AutoRunIdError {
 
 fn load_auto_run_id() -> Result<AttrVal, AutoRunIdError> {
     let path = Path::new(AUTO_RUN_ID_FILE_NAME);
-    let prev_run_id: i64 = if path.exists() {
-        let content = fs::read_to_string(path).map_err(|_| AutoRunIdError::FileRead)?;
-        content
-            .trim()
-            .parse::<i64>()
-            .map_err(|_| AutoRunIdError::FileParse)?
-    } else {
-        0
-    };
+    let prev_run_id = read_run_id()? as i64;
     let run_id = prev_run_id + 1;
     tracing::debug!(path = %path.display(), prev_run_id, run_id, "Loading auto-run-id");
     let run_id_str = run_id.to_string();
     fs::write(path, run_id_str).map_err(|_| AutoRunIdError::FileWrite)?;
     Ok(AttrVal::from(run_id))
+}
+
+pub fn read_run_id() -> Result<u32, AutoRunIdError> {
+    let path = Path::new(AUTO_RUN_ID_FILE_NAME);
+    if path.exists() {
+        let content = fs::read_to_string(path).map_err(|_| AutoRunIdError::FileRead)?;
+        content
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| AutoRunIdError::FileParse)
+    } else {
+        Ok(0)
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

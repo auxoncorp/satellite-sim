@@ -11,7 +11,7 @@ use std::{
 use fsw_lib::{
     external_mission_control::send_tle_set,
     gui::{GuiState, RenderContext, SharedGuiState},
-    modality::MODALITY,
+    modality::{read_run_id, MODALITY},
     scenario::{Scenario, ScenarioOptions},
     sim_info::SimulationInfo,
     system::{System, SystemEnvironment, SystemSharedState},
@@ -40,6 +40,10 @@ struct Opts {
     /// initial configurations.
     #[arg(long)]
     config_prng_seed: Option<u64>,
+
+    /// Use the generated run ID as the PRNG seed value.
+    #[arg(long, conflicts_with("config_prng_seed"))]
+    run_id_prng_seed: bool,
 
     /// Enable all mutators.
     ///
@@ -72,7 +76,7 @@ const STEP_SUBSAMPLING: usize = 100;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
-    let opts = Opts::parse();
+    let mut opts = Opts::parse();
 
     let intr = interruptor::Interruptor::new();
     let intr_clone = intr.clone();
@@ -91,6 +95,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             intr_clone.set();
         }
     })?;
+
+    if opts.run_id_prng_seed {
+        opts.config_prng_seed = Some(read_run_id().expect("Failed to read run-id") as _);
+    }
 
     MODALITY.connect();
 
