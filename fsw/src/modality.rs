@@ -411,6 +411,13 @@ impl ModalityClient {
                     .block_on(inner.mut_plane_conn.write_msg(&announcement))
                     .expect("Mutator announcement");
                 inner.mutator_messages.insert(m.mutator_id(), Vec::new());
+                inner.quick_event_attrs(
+                    "modality.mutator.announced",
+                    [kv(
+                        "event.mutator.id",
+                        mutator_id_to_attr_val(m.mutator_id()),
+                    )],
+                );
             }
         })
     }
