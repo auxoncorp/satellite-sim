@@ -680,6 +680,14 @@ impl AngularVelocity {
     }
 }
 
+impl Mul<Time> for AngularVelocity {
+    type Output = Angle;
+
+    fn mul(self, rhs: Time) -> Self::Output {
+        Angle::from_radians(self.as_radians_per_second() * rhs.as_secs())
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Serialize)]
 pub struct Acceleration {
     meters_per_second_squared: f64,

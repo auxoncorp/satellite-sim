@@ -6,7 +6,10 @@ use modality_mutator_protocol::{
 use std::collections::BTreeMap;
 
 pub use generic_mutator::{GenericBooleanMutator, GenericSetFloatMutator};
-pub use util::{constant_temperature_descriptor, watchdog_out_of_sync_descriptor, SimTimer};
+pub use util::{
+    constant_temperature_descriptor, disable_vision_stabilizer_descriptor,
+    watchdog_out_of_sync_descriptor, SimTimer,
+};
 
 mod generic_mutator;
 mod util;

@@ -464,6 +464,11 @@ impl Config {
                     .as_ref()
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
                     .unwrap_or(enable_all_mutators),
+                disable_stabilizer: f
+                    .disable_stabilizer
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(enable_all_mutators),
             })
             .unwrap_or_else(|| vision::VisionFaultConfig {
                 active_cooling: None,
@@ -471,6 +476,7 @@ impl Config {
                 focus_camera_offline: None,
                 focus_camera_gimbal: None,
                 watchdog_out_of_sync: enable_all_mutators,
+                disable_stabilizer: enable_all_mutators,
             });
 
         let ncfg = vision::VisionConfig::nominal(id, apply_variance.then_some(prng))
@@ -860,6 +866,7 @@ pub struct VisionFault {
     pub focus_camera_gimbal: Option<String>,
     pub watchdog_out_of_sync: Option<String>,
     pub watchdog_out_of_sync_recurring: Option<bool>,
+    pub disable_stabilizer: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize)]
@@ -1296,6 +1303,7 @@ mod tests {
             focus-camera-constant-temperature-after-reset = 22.0
             scanner-camera-constant-temperature-after-reset = 33.0
             watchdog-out-of-sync = 'm0'
+            disable-stabilizer = 'm0'
 
         [[imu-subsystem]]
         name = 'imu0'

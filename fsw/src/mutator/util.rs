@@ -60,6 +60,31 @@ pub fn constant_temperature_descriptor(
     }
 }
 
+pub fn disable_vision_stabilizer_descriptor(
+    component_name: &str,
+    id: &SatelliteId,
+) -> OwnedMutatorDescriptor {
+    OwnedMutatorDescriptor {
+        name: "Disable vision stabilizer".to_owned().into(),
+        description: "Disables the vision subsystem orientation stabilizer"
+            .to_owned()
+            .into(),
+        layer: MutatorLayer::Implementational.into(),
+        group: component_name.to_owned().into(),
+        operation: MutatorOperation::Enable.into(),
+        statefulness: MutatorStatefulness::Transient.into(),
+        organization_custom_metadata: OrganizationCustomMetadata::new(
+            "satellite".to_string(),
+            HashMap::from([
+                ("id".to_string(), id.satcat_id.into()),
+                ("name".to_string(), id.name.into()),
+                ("component_name".to_string(), component_name.into()),
+            ]),
+        ),
+        params: Default::default(),
+    }
+}
+
 /// A simulation-relative-time timer
 #[derive(Debug)]
 pub struct SimTimer {

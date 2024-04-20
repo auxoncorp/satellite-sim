@@ -151,6 +151,7 @@ impl Scenario {
                 sat.comms_config.fault_config.watchdog_out_of_sync = true;
 
                 sat.vision_config.fault_config.watchdog_out_of_sync = true;
+                sat.vision_config.fault_config.disable_stabilizer = true;
 
                 sat.imu_config.fault_config.watchdog_out_of_sync = true;
                 sat.imu_config.fault_config.constant_temperature = true;

@@ -11,7 +11,10 @@ use crate::{
     channel::{Receiver, Sender, TracedMessage},
     event,
     modality::{kv, AttrsBuilder, MODALITY},
-    mutator::{watchdog_out_of_sync_descriptor, GenericBooleanMutator},
+    mutator::{
+        disable_vision_stabilizer_descriptor, watchdog_out_of_sync_descriptor,
+        GenericBooleanMutator, MutatorActuatorDescriptor,
+    },
     point_failure::{PointFailure, PointFailureConfig},
     recv,
     satellite::temperature_sensor::{
@@ -21,7 +24,10 @@ use crate::{
     satellite::{SatelliteEnvironment, SatelliteId, SatelliteSharedState},
     system::{CameraSourceId, Detections, IREvent},
     try_send,
-    units::{Angle, ElectricPotential, LuminousIntensity, Temperature, TemperatureInterval, Time},
+    units::{
+        Angle, AngularVelocity, ElectricPotential, LuminousIntensity, Temperature,
+        TemperatureInterval, Time,
+    },
     SimulationComponent,
 };
 
@@ -66,6 +72,9 @@ pub struct VisionSubsystem {
     focus_camera_gimbal: Option<PointFailure<Temperature>>,
 
     watchdog_out_of_sync: Option<GenericBooleanMutator>,
+    disable_stabilizer: Option<GenericBooleanMutator>,
+
+    stabilizer_state: DisableVisionStabilizerMutatorState,
 
     event_tx: Sender<Detections>,
     cmd_rx: Receiver<VisionCommand>,
@@ -110,6 +119,9 @@ pub struct VisionFaultConfig {
     /// Enable the data watchdog execution out-of-sync mutator.
     /// See sections 1.3.4.2 of the requirements doc.
     pub watchdog_out_of_sync: bool,
+
+    /// Enable the vision orientation stabilizer disable mutator.
+    pub disable_stabilizer: bool,
 }
 
 impl VisionConfig {
@@ -164,6 +176,7 @@ impl VisionConfig {
     pub fn with_all_mutators_enabled(mut self, enable_all_mutators: Option<bool>) -> Self {
         if enable_all_mutators.unwrap_or(false) {
             self.fault_config.watchdog_out_of_sync = true;
+            self.fault_config.disable_stabilizer = true;
         }
         self
     }
@@ -234,6 +247,7 @@ impl VisionStatus {
             self.focus_camera_temperature.as_degrees_celsius(),
         );
         b.kv("error.out_of_sync", self.error_register.out_of_sync);
+        b.kv("error.stabilizer", self.error_register.stabilizer);
     }
 }
 
@@ -241,6 +255,9 @@ impl VisionStatus {
 pub struct VisionErrorRegister {
     /// Watchdog detected out-of-sync execution, subsystem is halted                                                           
     pub out_of_sync: bool,
+
+    /// Stabilizer is malfunctioning, detections may be degraded
+    pub stabilizer: bool,
 }
 
 impl VisionSubsystem {
@@ -290,13 +307,18 @@ impl VisionSubsystem {
             in_focus_object_ids: None,
             scanner_cam_temp_sensor,
             focus_cam_temp_sensor,
-            error_register: VisionErrorRegister { out_of_sync: false },
+            error_register: VisionErrorRegister {
+                out_of_sync: false,
+                stabilizer: false,
+            },
             active_cooling,
             scanner_camera_offline,
             focus_camera_offline,
             focus_camera_gimbal,
             // Mutators are initialized in init_fault_models at sim-init time
             watchdog_out_of_sync: None,
+            disable_stabilizer: None,
+            stabilizer_state: DisableVisionStabilizerMutatorState::default(),
             event_tx,
             cmd_rx,
             res_tx,
@@ -358,6 +380,18 @@ impl VisionSubsystem {
         if let Some(m) = &self.watchdog_out_of_sync {
             MODALITY.register_mutator(m);
         }
+
+        self.disable_stabilizer =
+            self.config
+                .fault_config
+                .disable_stabilizer
+                .then_some(GenericBooleanMutator::new(
+                    disable_vision_stabilizer_descriptor(Self::COMPONENT_NAME, id),
+                ));
+
+        if let Some(m) = &self.disable_stabilizer {
+            MODALITY.register_mutator(m);
+        }
     }
 
     fn update_fault_models(&mut self, dt: Time, power_supply_voltage: ElectricPotential) {
@@ -382,6 +416,16 @@ impl VisionSubsystem {
             .as_ref()
             .map(|m| m.is_active())
             .unwrap_or(false);
+
+        let is_active = self
+            .disable_stabilizer
+            .as_ref()
+            .map(|m| m.is_active())
+            .unwrap_or(false);
+        if is_active != self.stabilizer_state.active {
+            self.stabilizer_state.reset(is_active);
+        }
+        self.error_register.stabilizer = self.stabilizer_state.active;
     }
 
     fn hard_reset(&mut self, rel_time: Time) {
@@ -389,6 +433,7 @@ impl VisionSubsystem {
 
         // Clear error register
         self.error_register.out_of_sync = false;
+        self.error_register.stabilizer = false;
 
         // Clear tracking state
         self.in_focus_object_ids = None;
@@ -412,6 +457,12 @@ impl VisionSubsystem {
         if let Some(m) = self.watchdog_out_of_sync.as_mut() {
             MODALITY.clear_mutation(m);
         }
+
+        if let Some(m) = self.disable_stabilizer.as_mut() {
+            MODALITY.clear_mutation(m);
+        }
+
+        self.stabilizer_state.reset(false);
 
         // Reset to initial temperature
         self.focus_cam_temp_sensor.reset();
@@ -474,8 +525,11 @@ impl<'a> SimulationComponent<'a> for VisionSubsystem {
     fn step(&mut self, dt: Time, env: &SatelliteEnvironment, sat: &mut SatelliteSharedState) {
         let _timeline_guard = MODALITY.set_current_timeline(self.timeline, sat.rtc);
 
-        MODALITY
-            .process_mutation_plane_messages(std::iter::once(self.watchdog_out_of_sync.as_mut()));
+        let mutators = [
+            self.watchdog_out_of_sync.as_mut().map(|m| m.as_dyn()),
+            self.disable_stabilizer.as_mut().map(|m| m.as_dyn()),
+        ];
+        MODALITY.process_mutation_plane_messages(mutators.into_iter());
 
         self.scanner_cam_temp_sensor.step(dt, env, sat);
         self.focus_cam_temp_sensor.step(dt, env, sat);
@@ -560,7 +614,7 @@ impl<'a> SimulationComponent<'a> for VisionSubsystem {
             .unwrap_or(false)
             || self.config.focus_camera_disabled;
 
-        let scanner_camera = Camera::new(self.config.scanner_field_of_view_angle, &gps.pos_w);
+        let mut scanner_camera = Camera::new(self.config.scanner_field_of_view_angle, &gps.pos_w);
         let mut focus_camera = Camera::new(self.config.focus_field_of_view_angle, &gps.pos_w);
 
         // Run containment test on the scanner camera, if not offline
@@ -698,6 +752,23 @@ impl<'a> SimulationComponent<'a> for VisionSubsystem {
                 ) {
                     detection_events.push(tracked_event);
                 }
+            }
+        }
+
+        // Handle vision stabilizer mutator
+        if self.stabilizer_state.active {
+            detection_events.clear();
+
+            self.stabilizer_state.step(dt);
+
+            let fp = self
+                .stabilizer_state
+                .focal_point_target(&scanner_camera.pos);
+            scanner_camera.set_focal_point_target(&fp);
+
+            if !focus_camera_disabled {
+                let fp = self.stabilizer_state.focal_point_target(&focus_camera.pos);
+                focus_camera.set_focal_point_target(&fp);
             }
         }
 
@@ -976,4 +1047,48 @@ fn gt_and_src_id_attrs(
         b.kv("event.source_id", id);
     }
     b.build()
+}
+
+#[derive(Debug)]
+struct DisableVisionStabilizerMutatorState {
+    active: bool,
+    angular_rate: AngularVelocity,
+    angle: Angle,
+}
+
+impl Default for DisableVisionStabilizerMutatorState {
+    fn default() -> Self {
+        Self {
+            active: false,
+            angular_rate: AngularVelocity::from_degrees_per_second(1.0),
+            angle: Angle::from_degrees(0.0),
+        }
+    }
+}
+
+impl DisableVisionStabilizerMutatorState {
+    const MAX_ANGLE_DEG: f64 = 85.0;
+
+    // TODO - it'd be nice for this to ramp back to normal
+    fn reset(&mut self, active: bool) {
+        self.active = active;
+        self.angular_rate = AngularVelocity::from_degrees_per_second(1.0);
+        self.angle = Angle::from_degrees(0.0);
+    }
+
+    fn step(&mut self, dt: Time) {
+        let next_angle = self.angle + (self.angular_rate * dt);
+        self.angle = Angle::from_degrees(next_angle.as_degrees().clamp(0.0, Self::MAX_ANGLE_DEG));
+    }
+
+    fn focal_point_target(&self, cam_pos: &Vector3<f64>) -> Vector3<f64> {
+        // Focal point starts at the ECEF origin
+        let fp = Vector3::zeros();
+
+        let pos_rel_to_fp = fp - cam_pos;
+
+        let rot = UnitQuaternion::from_scaled_axis(Vector3::x() * self.angle.as_radians());
+
+        rot * pos_rel_to_fp
+    }
 }
