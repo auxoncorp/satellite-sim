@@ -217,6 +217,7 @@ impl<'a> SimulationComponent<'a> for Satellite {
                 let gps = env.fsw_data.gps.get(&0).expect("Missing primary GPS");
                 gui.borrow_mut().update_satellite(
                     self.shared_state.id.satcat_id,
+                    false, // has_errors
                     &gps.pos_w,
                     &gps.vel_w,
                 );
@@ -236,20 +237,18 @@ impl<'a> SimulationComponent<'a> for Satellite {
         env: &SatelliteEnvironment,
         _common_state: &mut Self::SharedState,
     ) {
-        if let Some(gui) = &self.shared_state.gui {
-            let gps = env.fsw_data.gps.get(&0).expect("Missing primary GPS");
-            gui.borrow_mut().update_satellite(
-                self.shared_state.id.satcat_id,
-                &gps.pos_w,
-                &gps.vel_w,
-            );
-        }
-
         self.comms.step(dt, env, &mut self.shared_state);
         self.power.step(dt, env, &mut self.shared_state);
         self.vision.step(dt, env, &mut self.shared_state);
         self.imu.step(dt, env, &mut self.shared_state);
         self.compute.step(dt, env, &mut self.shared_state);
+
+        let mut any_error_bits_set = false;
+        any_error_bits_set |= self.comms.has_error_bits_set();
+        any_error_bits_set |= self.power.has_error_bits_set();
+        any_error_bits_set |= self.vision.has_error_bits_set();
+        any_error_bits_set |= self.imu.has_error_bits_set();
+        any_error_bits_set |= self.compute.has_error_bits_set();
 
         for ch in self.channels.iter_mut() {
             ch.step().expect("Error stepping channel");
@@ -270,6 +269,16 @@ impl<'a> SimulationComponent<'a> for Satellite {
         }
         if self.shared_state.reset_flags.fetch_clear_compute_reset() {
             self.compute.reset(env, &mut self.shared_state);
+        }
+
+        if let Some(gui) = &self.shared_state.gui {
+            let gps = env.fsw_data.gps.get(&0).expect("Missing primary GPS");
+            gui.borrow_mut().update_satellite(
+                self.shared_state.id.satcat_id,
+                any_error_bits_set,
+                &gps.pos_w,
+                &gps.vel_w,
+            );
         }
     }
 }

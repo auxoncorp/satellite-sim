@@ -103,6 +103,10 @@ impl PowerSubsystem {
         }
     }
 
+    pub fn has_error_bits_set(&self) -> bool {
+        self.error_register.out_of_sync
+    }
+
     fn solar_panel_charge_rate(&self) -> ElectricCurrent {
         if let Some(active_mutation) = self
             .solar_panel_degraded

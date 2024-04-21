@@ -27,6 +27,9 @@ pub type GroundTruthId = i64;
 const EARTH_TEXTURE_JPG: &[u8] = include_bytes!("../textures/2k_earth_daymap.jpg");
 const MOON_TEXTURE_JPG: &[u8] = include_bytes!("../textures/2k_moon.jpg");
 
+const SAT_NOMINAL_RGB: [f32; 3] = [1.0, 1.0, 0.0];
+const SAT_ERROR_RGB: [f32; 3] = [1.0, 0.0, 0.0];
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum RenderContext {
     /// Simulation
@@ -56,6 +59,7 @@ pub struct GuiState {
     unit_sun_vector: Vector3<f32>,
 
     sat_nodes: HashMap<SatCatId, SceneNode>,
+    sat_highlight_nodes: HashMap<SatCatId, SceneNode>,
     scanner_cam_nodes: HashMap<SatCatId, SceneNode>,
     focus_cam_nodes: HashMap<SatCatId, SceneNode>,
     ir_event_ndoes: HashMap<GroundTruthId, SceneNode>,
@@ -129,6 +133,7 @@ impl GuiState {
             celestial_body_nodes,
             unit_sun_vector: Vector3::zeros(),
             sat_nodes: Default::default(),
+            sat_highlight_nodes: Default::default(),
             scanner_cam_nodes: Default::default(),
             focus_cam_nodes: Default::default(),
             ir_event_ndoes: Default::default(),
@@ -422,6 +427,7 @@ impl GuiState {
     pub fn update_satellite(
         &mut self,
         satcat_id: SatCatId,
+        has_errors: bool,
         pos_w: &Vector3<f64>,
         _vel_w: &Vector3<f64>,
     ) {
@@ -429,13 +435,32 @@ impl GuiState {
             .entry(satcat_id)
             .and_modify(|n| {
                 n.set_local_translation(scale_v3(pos_w).into());
+                n.set_color(SAT_NOMINAL_RGB[0], SAT_NOMINAL_RGB[1], SAT_NOMINAL_RGB[2]);
             })
             .or_insert_with(|| {
-                let mut n = self.window.add_sphere(0.3);
-                n.set_color(1.0, 1.0, 0.0);
+                let mut n = self.window.add_sphere(0.32);
                 n.set_local_translation(scale_v3(pos_w).into());
                 n
             });
+
+        // Draw a red wire box around the satellite if it has any error bits set
+        if has_errors {
+            self.sat_highlight_nodes
+                .entry(satcat_id)
+                .and_modify(|n| {
+                    n.set_local_translation(scale_v3(pos_w).into());
+                })
+                .or_insert_with(|| {
+                    let mut n = self.window.add_cube(1.3, 1.3, 1.3);
+                    n.set_color(SAT_ERROR_RGB[0], SAT_ERROR_RGB[1], SAT_ERROR_RGB[2]);
+                    n.set_lines_width(0.3);
+                    n.set_surface_rendering_activation(false);
+                    n.set_local_translation(scale_v3(pos_w).into());
+                    n
+                });
+        } else if let Some(mut n) = self.sat_highlight_nodes.remove(&satcat_id) {
+            self.window.remove_node(&mut n);
+        }
     }
 
     pub fn update_satellite_scanner_camera(
@@ -460,7 +485,7 @@ impl GuiState {
                 let mut n = self
                     .window
                     .add_cone(scale(viewing_volume_radius), scale(viewing_volume_height));
-                n.set_color(1.0, 1.0, 0.0);
+                n.set_color(0.8, 0.8, 0.0);
                 n.set_points_size(1.0);
                 n.set_lines_width(1.0);
                 n.set_surface_rendering_activation(false);

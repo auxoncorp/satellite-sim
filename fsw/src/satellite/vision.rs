@@ -325,6 +325,10 @@ impl VisionSubsystem {
         }
     }
 
+    pub fn has_error_bits_set(&self) -> bool {
+        self.error_register.out_of_sync || self.error_register.stabilizer
+    }
+
     /// Returns true if the step loop should be run for the given sim iteration
     fn downsample_step(&mut self, dt: Time) -> bool {
         if self.sim_iters_per_interval == 0 {

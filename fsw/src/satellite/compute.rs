@@ -195,6 +195,10 @@ impl ComputeSubsystem {
         }
     }
 
+    pub fn has_error_bits_set(&self) -> bool {
+        self.error_register.out_of_sync
+    }
+
     fn init_fault_models(&mut self, id: &SatelliteId) {
         let base_ctx = [
             ("satellite_name", id.name),
