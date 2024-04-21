@@ -9,8 +9,9 @@ use crate::{
     event,
     modality::{kv, AttrsBuilder, MODALITY},
     mutator::{
-        constant_temperature_descriptor, watchdog_out_of_sync_descriptor, GenericBooleanMutator,
-        GenericSetFloatMutator, MutatorActuatorDescriptor,
+        constant_temperature_descriptor, degrade_orbit_maintenance_descriptor,
+        watchdog_out_of_sync_descriptor, GenericBooleanMutator, GenericSetFloatMutator,
+        MutatorActuatorDescriptor,
     },
     point_failure::{PointFailure, PointFailureConfig},
     recv,
@@ -43,6 +44,7 @@ pub struct ImuSubsystem {
     data_inconsistency: Option<PointFailure<Temperature>>,
     watchdog_out_of_sync: Option<GenericBooleanMutator>,
     constant_temperature: Option<GenericSetFloatMutator>,
+    orbit_maintenance: Option<GenericSetFloatMutator>,
 
     timeline: TimelineId,
 
@@ -79,6 +81,9 @@ pub struct ImuFaultConfig {
 
     /// Enable the constant temperature mutator.
     pub constant_temperature: bool,
+
+    /// Enable the orbit maintenance mutator.
+    pub orbit_maintenance: bool,
 }
 
 impl ImuConfig {
@@ -115,6 +120,7 @@ impl ImuConfig {
         if enable_all_mutators.unwrap_or(false) {
             self.fault_config.watchdog_out_of_sync = true;
             self.fault_config.constant_temperature = true;
+            self.fault_config.orbit_maintenance = true;
         }
         self
     }
@@ -303,6 +309,7 @@ impl ImuSubsystem {
             // Mutators are initialized in init_fault_models at sim-init time
             watchdog_out_of_sync: None,
             constant_temperature: None,
+            orbit_maintenance: None,
         }
     }
 
@@ -310,6 +317,14 @@ impl ImuSubsystem {
         self.error_register.out_of_sync
             || self.error_register.degraded
             || self.error_register.data_inconsistency
+    }
+
+    /// Get the orbit maintenance mutator's error_rate_ratio mutation parameter.
+    /// This is used out-of-band in the System to modify the GPS's reported position.
+    pub(crate) fn orbit_maintenance_error_rate_ratio(&self) -> Option<f64> {
+        self.orbit_maintenance
+            .as_ref()
+            .and_then(|m| m.active_mutation())
     }
 
     fn init_fault_models(&mut self, id: &SatelliteId) {
@@ -353,6 +368,18 @@ impl ImuSubsystem {
         if let Some(m) = &self.constant_temperature {
             MODALITY.register_mutator(m);
         }
+
+        self.orbit_maintenance =
+            self.config
+                .fault_config
+                .orbit_maintenance
+                .then_some(GenericSetFloatMutator::new(
+                    degrade_orbit_maintenance_descriptor(Self::COMPONENT_NAME, id),
+                ));
+
+        if let Some(m) = &self.orbit_maintenance {
+            MODALITY.register_mutator(m);
+        }
     }
 
     fn update_fault_models(&mut self, dt: Time) {
@@ -384,6 +411,15 @@ impl ImuSubsystem {
                     self.temp_sensor.convert_to_constant_model(temp);
                 }
             }
+        }
+
+        if self
+            .orbit_maintenance
+            .as_ref()
+            .map(|m| m.active_mutation().is_some())
+            .unwrap_or(false)
+        {
+            self.error_register.degraded = true;
         }
     }
 
@@ -460,6 +496,7 @@ impl<'a> SimulationComponent<'a> for ImuSubsystem {
         let mutators = [
             self.watchdog_out_of_sync.as_mut().map(|m| m.as_dyn()),
             self.constant_temperature.as_mut().map(|m| m.as_dyn()),
+            self.orbit_maintenance.as_mut().map(|m| m.as_dyn()),
         ];
         MODALITY.process_mutation_plane_messages(mutators.into_iter());
 

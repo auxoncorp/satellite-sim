@@ -43,7 +43,7 @@ pub struct Satellite {
     comms: CommsSubsystem,
     compute: ComputeSubsystem,
     vision: VisionSubsystem,
-    imu: ImuSubsystem,
+    pub(crate) imu: ImuSubsystem,
 }
 
 impl Satellite {

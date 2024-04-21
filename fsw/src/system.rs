@@ -4,7 +4,7 @@ use std::{collections::HashMap, net::TcpStream};
 use modality_ingest_client::IngestError;
 use na::Vector3;
 use nav_types::{NVector, WGS84};
-use types42::spacecraft::SpacecraftIndex;
+use types42::prelude::{FswData, SpacecraftIndex, WorldKind};
 
 use crate::{
     channel::{Step, StepChannel, TracedMessage},
@@ -18,7 +18,7 @@ use crate::{
     },
     scenario::Scenario,
     sim_info::SimulationInfo,
-    units::{LuminousIntensity, Time, Timestamp},
+    units::{Length, LuminousIntensity, Time, Timestamp, Velocity},
     SimulationComponent,
 };
 
@@ -30,6 +30,12 @@ pub struct System {
     ground_truth_events_manager: GroundTruthIrEventsManager,
     consolidated_ground_station: ConsolidatedGroundStation,
     relay_stations: Vec<RelayGroundStation>,
+
+    // Local copy of each satellite's FswData used to hold
+    // onto the mutated variants.
+    // Currently only used to support the IMU orbit maintenance
+    // mutator (modifies Gps.pos_w)
+    mutator_state: HashMap<SpacecraftIndex, OrbitMaintenanceMutatorState>,
 
     cgs_to_relay_ch: StepChannel<GroundToSatMessage>,
     relay_to_cgs_ch: StepChannel<Relayed<SatToGroundMessage>>,
@@ -79,6 +85,7 @@ impl System {
             ),
             consolidated_ground_station,
             relay_stations,
+            mutator_state: Default::default(),
             cgs_to_relay_ch,
             relay_to_cgs_ch,
             relay_to_sat_ch,
@@ -158,10 +165,30 @@ impl<'a> SimulationComponent<'a> for System {
                 .spacecrafts
                 .get(sat_idx)
                 .expect("Missing satellite from environment");
+
+            let fsw_data =
+                if let Some(error_rate_ratio) = sat.imu.orbit_maintenance_error_rate_ratio() {
+                    let state = self.mutator_state.entry(*sat_idx).or_insert_with(|| {
+                        OrbitMaintenanceMutatorState::new(spacecraft.ac.clone())
+                    });
+                    state.fsw_data = spacecraft.ac.clone();
+
+                    if !state.active {
+                        state.radial_offset = Length::from_meters(0.0);
+                        state.active = true;
+                    }
+
+                    state.step(dt, error_rate_ratio);
+
+                    &state.fsw_data
+                } else {
+                    &spacecraft.ac
+                };
+
             let env = SatelliteEnvironment {
                 sim_info: env.sim_info,
                 timestamp: &env.telemetry.timestamp,
-                fsw_data: &spacecraft.ac,
+                fsw_data,
                 ground_truth_ir_events: self.ground_truth_events_manager.active_events(),
             };
             sat.step(dt, &env, shared_state);
@@ -464,5 +491,42 @@ impl SatErrorFlag {
             SatErrorFlag::ImuDegraded => "ImuDegraded",
             SatErrorFlag::ImuDataInconsistency => "ImuDataInconsistency",
         }
+    }
+}
+
+#[derive(Debug)]
+struct OrbitMaintenanceMutatorState {
+    active: bool,
+    fsw_data: FswData,
+    radial_offset: Length,
+}
+
+impl OrbitMaintenanceMutatorState {
+    const MAX_RADIAL_RATE: Velocity = Velocity::from_meters_per_second(10_000.0);
+
+    fn new(fsw_data: FswData) -> Self {
+        Self {
+            active: false,
+            fsw_data,
+            radial_offset: Length::from_meters(0.0),
+        }
+    }
+
+    fn step(&mut self, dt: Time, error_rate_ratio: f64) {
+        let ratio = error_rate_ratio.clamp(0.0, 1.0);
+        let radial_rate =
+            Velocity::from_meters_per_second(Self::MAX_RADIAL_RATE.as_meters_per_second() * ratio);
+        self.radial_offset = self.radial_offset + (radial_rate.abs() * dt);
+
+        // Apply the transformation
+        let gps = self.fsw_data.gps.get_mut(&0).unwrap();
+        let v = &mut gps.pos_w;
+        let v_bar = v.magnitude();
+        let radial_offset = self
+            .radial_offset
+            .as_meters()
+            .clamp(0.0, v_bar - WorldKind::EARTH_RADIUS);
+        let scale = (v_bar - radial_offset) / v_bar;
+        v.scale_mut(scale);
     }
 }

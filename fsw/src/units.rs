@@ -50,6 +50,14 @@ impl Mul<Length> for f64 {
     }
 }
 
+impl Add<Length> for Length {
+    type Output = Length;
+
+    fn add(self, rhs: Length) -> Self::Output {
+        Length::from_meters(self.as_meters() + rhs.as_meters())
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, PartialOrd)]
 pub struct Area {
     square_meters: f64,
@@ -547,7 +555,7 @@ impl std::fmt::Debug for Velocity {
 }
 
 impl Velocity {
-    pub fn from_meters_per_second(meters_per_second: f64) -> Velocity {
+    pub const fn from_meters_per_second(meters_per_second: f64) -> Velocity {
         Velocity { meters_per_second }
     }
 
@@ -581,6 +589,14 @@ impl Div<Velocity> for Velocity {
 
     fn div(self, rhs: Velocity) -> Self::Output {
         Ratio::from_f64(self.as_meters_per_second() / rhs.as_meters_per_second())
+    }
+}
+
+impl Mul<Time> for Velocity {
+    type Output = Length;
+
+    fn mul(self, rhs: Time) -> Self::Output {
+        Length::from_meters(self.as_meters_per_second() * rhs.as_secs())
     }
 }
 

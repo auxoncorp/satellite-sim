@@ -155,6 +155,7 @@ impl Scenario {
 
                 sat.imu_config.fault_config.watchdog_out_of_sync = true;
                 sat.imu_config.fault_config.constant_temperature = true;
+                sat.imu_config.fault_config.orbit_maintenance = true;
             }
 
             for rgs in ground_stations.values_mut() {

@@ -435,11 +435,11 @@ impl GuiState {
             .entry(satcat_id)
             .and_modify(|n| {
                 n.set_local_translation(scale_v3(pos_w).into());
-                n.set_color(SAT_NOMINAL_RGB[0], SAT_NOMINAL_RGB[1], SAT_NOMINAL_RGB[2]);
             })
             .or_insert_with(|| {
                 let mut n = self.window.add_sphere(0.32);
                 n.set_local_translation(scale_v3(pos_w).into());
+                n.set_color(SAT_NOMINAL_RGB[0], SAT_NOMINAL_RGB[1], SAT_NOMINAL_RGB[2]);
                 n
             });
 

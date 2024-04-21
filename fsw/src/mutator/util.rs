@@ -85,6 +85,39 @@ pub fn disable_vision_stabilizer_descriptor(
     }
 }
 
+pub fn degrade_orbit_maintenance_descriptor(
+    component_name: &str,
+    id: &SatelliteId,
+) -> OwnedMutatorDescriptor {
+    OwnedMutatorDescriptor {
+        name: "Degrade orbit maintenance".to_owned().into(),
+        description: "Degrades the IMU subsystem orbit maintenance function"
+            .to_owned()
+            .into(),
+        layer: MutatorLayer::Implementational.into(),
+        group: component_name.to_owned().into(),
+        operation: MutatorOperation::SetToValue.into(),
+        statefulness: MutatorStatefulness::Permanent.into(),
+        organization_custom_metadata: OrganizationCustomMetadata::new(
+            "satellite".to_string(),
+            HashMap::from([
+                ("id".to_string(), id.satcat_id.into()),
+                ("name".to_string(), id.name.into()),
+                ("component_name".to_string(), component_name.into()),
+            ]),
+        ),
+        params: vec![OwnedMutatorParamDescriptor::new(
+            AttrType::Float,
+            "error_rate_ratio".to_owned(),
+        )
+        .unwrap()
+        .with_description("Error rate ratio [normalized]")
+        .with_value_min(0.0)
+        .with_value_max(1.0)
+        .with_least_effect_value(0.0)],
+    }
+}
+
 /// A simulation-relative-time timer
 #[derive(Debug)]
 pub struct SimTimer {

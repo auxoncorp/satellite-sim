@@ -552,12 +552,18 @@ impl Config {
                     .as_ref()
                     .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
                     .unwrap_or(enable_all_mutators),
+                orbit_maintenance: f
+                    .orbit_maintenance
+                    .as_ref()
+                    .map(|m| self.mutator(m).map(|m| m.enabled).unwrap())
+                    .unwrap_or(enable_all_mutators),
             })
             .unwrap_or_else(|| imu::ImuFaultConfig {
                 degraded_state: None,
                 data_inconsistency: None,
                 watchdog_out_of_sync: enable_all_mutators,
                 constant_temperature: enable_all_mutators,
+                orbit_maintenance: enable_all_mutators,
             });
 
         let ncfg = imu::ImuConfig::nominal(id, apply_variance.then_some(prng))
@@ -891,6 +897,7 @@ pub struct ImuFault {
     pub data_inconsistency: Option<String>,
     pub watchdog_out_of_sync: Option<String>,
     pub constant_temperature: Option<String>,
+    pub orbit_maintenance: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize)]
@@ -1313,6 +1320,7 @@ mod tests {
             data-inconsistency = 'pf1'
             constant-temperature = 'm0'
             watchdog-out-of-sync = 'm0'
+            orbit-maintenance = 'm0'
 
         [[satellite]]
         name = 'GALAXY-1'
