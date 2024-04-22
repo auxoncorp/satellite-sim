@@ -1,5 +1,6 @@
 use clap::Parser;
 use protocol42::{parse_telemetry, ParseErrorExt, ACK_MSG, EOF_TOKEN};
+use ratelimit::Ratelimiter;
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::{fs::File, io};
@@ -11,6 +12,7 @@ use std::{
 use fsw_lib::{
     external_mission_control::send_tle_set,
     gui::{GuiState, RenderContext, SharedGuiState},
+    interruptor::Interruptor,
     modality::{read_run_id, MODALITY},
     scenario::{Scenario, ScenarioOptions},
     sim_info::SimulationInfo,
@@ -66,6 +68,11 @@ struct Opts {
     #[arg(long = "tle", group = "mc")]
     tle_entries_path: Option<PathBuf>,
 
+    /// Specify a minimum timer-per-step to slow down the simulation.
+    /// Accepts durations like "10ms" or "1minute 2seconds 22ms".
+    #[arg(long)]
+    time_per_step: Option<humantime::Duration>,
+
     /// The 42 data source. This can either be an address:port combination
     /// or a file path for import mode
     #[arg(default_value = "127.0.0.1:10001")]
@@ -78,7 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     let mut opts = Opts::parse();
 
-    let intr = interruptor::Interruptor::new();
+    let intr = Interruptor::new();
     let intr_clone = intr.clone();
     ctrlc::set_handler(move || {
         if intr_clone.is_set() {
@@ -100,6 +107,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         opts.config_prng_seed = Some(read_run_id().expect("Failed to read run-id") as _);
     }
 
+    let mut ratelimiter = opts.time_per_step.map(|dur| {
+        Ratelimiter::builder(1, dur.into())
+            .initial_available(1)
+            .build()
+            .unwrap()
+    });
+
     MODALITY.connect();
 
     let external_mission_control = if let Some(mc_sock_addr) = &opts.mission_control {
@@ -115,7 +129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut sys_state = SystemSharedState::new(if opts.dev_gui {
-        Some(GuiState::new_shared("Dev GUI", opts.pause))
+        Some(GuiState::new_shared("Dev GUI", opts.pause, intr.clone()))
     } else {
         None
     })?;
@@ -212,6 +226,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
+        let gui_paused_cb = || {
+            MODALITY.poll_mutation_plane();
+        };
+
         match last_t {
             Some(t) => {
                 let dt = (new_t - t) / STEP_SUBSAMPLING;
@@ -232,8 +250,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         RenderContext::Fsm
                     };
 
-                    if !render_gui(&sys_state.gui, ctx, &sim_info) {
-                        break 'outer;
+                    let gui_ratelimiter_active = gui_state_ratelimiter_active(&sys_state.gui);
+                    match (gui_ratelimiter_active, ratelimiter.as_mut()) {
+                        (true, Some(ratelimiter)) => {
+                            let mut force = false;
+                            'ratelimit: loop {
+                                if !render_gui(&sys_state.gui, ctx, &sim_info, force, gui_paused_cb)
+                                {
+                                    break 'outer;
+                                }
+                                match ratelimiter.try_wait() {
+                                    Ok(()) => break 'ratelimit,
+                                    Err(continue_after) => {
+                                        // Force rendering if we're going to be busy waiting since RenderContext
+                                        // may not be what the GUI mode is set to and that would normally do
+                                        // nothing
+                                        force = true;
+                                        let sleep =
+                                            std::cmp::min(continue_after, Duration::from_millis(1));
+                                        std::thread::sleep(sleep);
+                                        MODALITY.poll_mutation_plane();
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            if !render_gui(&sys_state.gui, ctx, &sim_info, false, gui_paused_cb) {
+                                break 'outer;
+                            }
+                        }
                     }
                 }
             }
@@ -245,7 +290,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
                 system.init(&env, &mut sys_state);
 
-                if !render_gui(&sys_state.gui, RenderContext::Sim, &sim_info) {
+                if !render_gui(
+                    &sys_state.gui,
+                    RenderContext::Sim,
+                    &sim_info,
+                    false,
+                    gui_paused_cb,
+                ) {
                     break 'outer;
                 }
             }
@@ -264,9 +315,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Returns false if the window should be closed
-fn render_gui(gui: &Option<SharedGuiState>, ctx: RenderContext, sim_info: &SimulationInfo) -> bool {
+fn render_gui<F>(
+    gui: &Option<SharedGuiState>,
+    ctx: RenderContext,
+    sim_info: &SimulationInfo,
+    force: bool,
+    paused_cb: F,
+) -> bool
+where
+    F: Fn(),
+{
     gui.as_ref()
-        .map(|gui| gui.borrow_mut().render(ctx, sim_info))
+        .map(|gui| gui.borrow_mut().render(ctx, sim_info, force, paused_cb))
+        .unwrap_or(true)
+}
+
+fn gui_state_ratelimiter_active(gui: &Option<SharedGuiState>) -> bool {
+    gui.as_ref()
+        .map(|gui| gui.borrow().ratelimiter_active())
         .unwrap_or(true)
 }
 
@@ -296,35 +362,6 @@ impl io::Write for DatSource {
         match self {
             DatSource::File(f) => io::Write::flush(f),
             DatSource::TcpStream(s) => io::Write::flush(s),
-        }
-    }
-}
-
-mod interruptor {
-    use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
-    use std::sync::Arc;
-
-    #[derive(Clone, Debug)]
-    #[repr(transparent)]
-    pub struct Interruptor(Arc<AtomicBool>);
-
-    impl Interruptor {
-        pub fn new() -> Self {
-            Interruptor(Arc::new(AtomicBool::new(false)))
-        }
-
-        pub fn set(&self) {
-            self.0.store(true, SeqCst);
-        }
-
-        pub fn is_set(&self) -> bool {
-            self.0.load(SeqCst)
-        }
-    }
-
-    impl Default for Interruptor {
-        fn default() -> Self {
-            Self::new()
         }
     }
 }

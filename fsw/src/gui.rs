@@ -12,6 +12,7 @@ use types42::prelude::{World, WorldKind};
 
 use crate::{
     ground_station::GroundStationId,
+    interruptor::Interruptor,
     satellite::{SatCatId, SATELLITE_IDS},
     sim_info::SimulationInfo,
 };
@@ -46,6 +47,7 @@ pub struct GuiState {
     text_color: Point3<f32>,
     text_buf: String,
 
+    interruptor: Interruptor,
     paused: bool,
     step: bool,
     sim_info_visibility: bool,
@@ -54,6 +56,7 @@ pub struct GuiState {
     sat_info_visibility: bool,
     ir_event_info_visibility: bool,
     mode: RenderContext,
+    ratelimiter_active: bool,
 
     celestial_body_nodes: HashMap<WorldKind, SceneNode>,
     unit_sun_vector: Vector3<f32>,
@@ -67,11 +70,19 @@ pub struct GuiState {
 }
 
 impl GuiState {
-    pub fn new_shared(win_title: &str, start_paused: bool) -> SharedGuiState {
-        Rc::new(RefCell::new(Self::new(win_title, start_paused)))
+    pub fn new_shared(
+        win_title: &str,
+        start_paused: bool,
+        interruptor: Interruptor,
+    ) -> SharedGuiState {
+        Rc::new(RefCell::new(Self::new(
+            win_title,
+            start_paused,
+            interruptor,
+        )))
     }
 
-    pub fn new(win_title: &str, start_paused: bool) -> Self {
+    pub fn new(win_title: &str, start_paused: bool, interruptor: Interruptor) -> Self {
         let eye = Vector3::new(1.0, 2.0, 1.0).scale(30.0);
         let at = Point3::origin();
         let mut cam = ArcBall::new(eye.into(), at);
@@ -98,21 +109,22 @@ impl GuiState {
         println!("----------------------------------------------");
         println!("|                 GUI key map                |");
         println!("----------------------------------------------");
-        println!("'p'   : snapshot : pauses and writes snapshot.png to the CWD");
-        println!("SPACE : pause");
-        println!("'n'   : step");
-        println!("'m'   : mode : render every sim step (default) or FSM step");
-        println!("'i'   : toggle sim info visibility");
-        println!("'f'   : toggle focus camera viewing volume visibility");
-        println!("'s'   : toggle scanner camera viewing volume visibility");
-        println!("'e'   : toggle IR event visibility");
-        println!("'j'   : toggle sun pointing vector visibility");
-        println!("'k'   : toggle XYZ axis visibility");
-        println!("'l'   : toggle satellite info visibility");
-        println!("'o'   : toggle IR event label visibility");
-        println!("'g'   : toggle relay ground station visibility");
-        println!("'r'   : toggle earth visibility");
-        println!("ESC   : exit");
+        println!("'p'      : snapshot : pauses and writes snapshot.png to the CWD");
+        println!("SPACE    : pause");
+        println!("'n'      : step");
+        println!("'m'      : mode : render every sim step (default) or FSM step");
+        println!("'i'      : toggle sim info visibility");
+        println!("'f'      : toggle focus camera viewing volume visibility");
+        println!("'s'      : toggle scanner camera viewing volume visibility");
+        println!("'e'      : toggle IR event visibility");
+        println!("'j'      : toggle sun pointing vector visibility");
+        println!("'k'      : toggle XYZ axis visibility");
+        println!("'l'      : toggle satellite info visibility");
+        println!("'o'      : toggle IR event label visibility");
+        println!("'g'      : toggle relay ground station visibility");
+        println!("'r'      : toggle earth visibility");
+        println!("'RSHIFT' : toggle time-per-step rate limiter");
+        println!("ESC      : exit");
         println!("----------------------------------------------");
 
         Self {
@@ -122,6 +134,7 @@ impl GuiState {
             text_origin: Point2::origin(),
             text_color: Point3::new(1.0, 1.0, 1.0),
             text_buf: String::with_capacity(1024),
+            interruptor,
             paused: start_paused,
             step: false,
             sim_info_visibility: true,
@@ -130,6 +143,7 @@ impl GuiState {
             sat_info_visibility: true,
             ir_event_info_visibility: true,
             mode: RenderContext::Sim,
+            ratelimiter_active: true,
             celestial_body_nodes,
             unit_sun_vector: Vector3::zeros(),
             sat_nodes: Default::default(),
@@ -139,6 +153,10 @@ impl GuiState {
             ir_event_ndoes: Default::default(),
             relay_ground_station_nodes: Default::default(),
         }
+    }
+
+    pub fn ratelimiter_active(&self) -> bool {
+        self.ratelimiter_active
     }
 
     /// Draw ECEF xyz axis lines
@@ -289,8 +307,17 @@ impl GuiState {
     }
 
     /// Returns false if the window should be closed
-    pub fn render(&mut self, ctx: RenderContext, sim_info: &SimulationInfo) -> bool {
-        if ctx != self.mode {
+    pub fn render<F>(
+        &mut self,
+        ctx: RenderContext,
+        sim_info: &SimulationInfo,
+        force: bool,
+        paused_cb: F,
+    ) -> bool
+    where
+        F: Fn(),
+    {
+        if !force && (ctx != self.mode) {
             return true;
         }
 
@@ -384,14 +411,20 @@ impl GuiState {
                                 println!("Paused at t = {}", sim_info.timestamp);
                             }
                         }
+                        Key::RShift => {
+                            self.ratelimiter_active = !self.ratelimiter_active;
+                        }
                         _ => (),
                     }
                 }
             }
 
-            if !self.paused || !kr || self.step {
+            if !self.paused || !kr || self.step || self.interruptor.is_set() {
                 self.step = false;
-                break kr;
+                break kr && !self.interruptor.is_set();
+            } else {
+                // Paused
+                paused_cb();
             }
         }
     }
@@ -451,9 +484,9 @@ impl GuiState {
                     n.set_local_translation(scale_v3(pos_w).into());
                 })
                 .or_insert_with(|| {
-                    let mut n = self.window.add_cube(1.3, 1.3, 1.3);
+                    let mut n = self.window.add_cube(1.4, 1.4, 1.4);
                     n.set_color(SAT_ERROR_RGB[0], SAT_ERROR_RGB[1], SAT_ERROR_RGB[2]);
-                    n.set_lines_width(0.3);
+                    n.set_lines_width(0.35);
                     n.set_surface_rendering_activation(false);
                     n.set_local_translation(scale_v3(pos_w).into());
                     n

@@ -112,9 +112,8 @@ pub fn degrade_orbit_maintenance_descriptor(
         )
         .unwrap()
         .with_description("Error rate ratio [normalized]")
-        .with_value_min(0.0)
-        .with_value_max(1.0)
-        .with_least_effect_value(0.0)],
+        .with_value_min(0.1)
+        .with_value_max(1.0)],
     }
 }
 
@@ -138,7 +137,7 @@ impl Default for SimTimer {
 impl SimTimer {
     pub fn start(&mut self, now: Time, duration: Time) {
         assert!(now.as_secs() >= 0.0);
-        assert!(duration.as_secs() > 0.0);
+        assert!(duration.as_secs() >= 0.0);
         self.started_at = Some(now);
         self.duration = duration;
     }
