@@ -115,7 +115,7 @@ impl Drop for TimelineGuard {
 
 impl ModalityClient {
     thread_local! {
-        static INNER: RefCell<Option<Inner>> = RefCell::new(None);
+        static INNER: RefCell<Option<Inner>> = const { RefCell::new(None) };
     }
 
     pub fn connect(&self) {
