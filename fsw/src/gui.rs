@@ -7,7 +7,13 @@ use kiss3d::{
     window::Window,
 };
 use na::{Isometry3, Point2, Point3, Quaternion, UnitQuaternion, Vector2, Vector3, Vector4};
-use std::{cell::RefCell, collections::HashMap, fmt::Write, path::Path, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    fmt::Write,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 use types42::prelude::{World, WorldKind};
 
 use crate::{
@@ -31,6 +37,9 @@ const MOON_TEXTURE_JPG: &[u8] = include_bytes!("../textures/2k_moon.jpg");
 const SAT_NOMINAL_RGB: [f32; 3] = [1.0, 1.0, 0.0];
 const SAT_ERROR_RGB: [f32; 3] = [1.0, 0.0, 0.0];
 
+// NOTE: not to scale
+const SAT_OBJ_SCALE: Vector3<f32> = Vector3::new(0.4, 0.4, 0.4);
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum RenderContext {
     /// Simulation
@@ -46,6 +55,8 @@ pub struct GuiState {
     text_origin: Point2<f32>,
     text_color: Point3<f32>,
     text_buf: String,
+
+    sat_model_and_mtl: Option<(PathBuf, PathBuf)>,
 
     interruptor: Interruptor,
     paused: bool,
@@ -74,15 +85,28 @@ impl GuiState {
         win_title: &str,
         start_paused: bool,
         interruptor: Interruptor,
+        sat_model_path: Option<PathBuf>,
     ) -> SharedGuiState {
         Rc::new(RefCell::new(Self::new(
             win_title,
             start_paused,
             interruptor,
+            sat_model_path,
         )))
     }
 
-    pub fn new(win_title: &str, start_paused: bool, interruptor: Interruptor) -> Self {
+    pub fn new(
+        win_title: &str,
+        start_paused: bool,
+        interruptor: Interruptor,
+        sat_model_path: Option<PathBuf>,
+    ) -> Self {
+        let sat_model_and_mtl = sat_model_path.map(|p| {
+            assert!(p.exists(), "satellite model path doesn't exist");
+            let mtl_dir_path = p.parent().expect("Material parent directory");
+            (p.clone(), mtl_dir_path.to_owned())
+        });
+
         let eye = Vector3::new(1.0, 2.0, 1.0).scale(30.0);
         let at = Point3::origin();
         let mut cam = ArcBall::new(eye.into(), at);
@@ -144,6 +168,7 @@ impl GuiState {
             ir_event_info_visibility: true,
             mode: RenderContext::Sim,
             ratelimiter_active: true,
+            sat_model_and_mtl,
             celestial_body_nodes,
             unit_sun_vector: Vector3::zeros(),
             sat_nodes: Default::default(),
@@ -470,9 +495,16 @@ impl GuiState {
                 n.set_local_translation(scale_v3(pos_w).into());
             })
             .or_insert_with(|| {
-                let mut n = self.window.add_sphere(0.32);
+                let mut n = if let Some(obj_and_mtl) = self.sat_model_and_mtl.as_ref() {
+                    self.window
+                        .add_obj(&obj_and_mtl.0, &obj_and_mtl.1, SAT_OBJ_SCALE)
+                } else {
+                    let mut n = self.window.add_sphere(0.32);
+                    n.set_color(SAT_NOMINAL_RGB[0], SAT_NOMINAL_RGB[1], SAT_NOMINAL_RGB[2]);
+                    n
+                };
+
                 n.set_local_translation(scale_v3(pos_w).into());
-                n.set_color(SAT_NOMINAL_RGB[0], SAT_NOMINAL_RGB[1], SAT_NOMINAL_RGB[2]);
                 n
             });
 
@@ -484,9 +516,9 @@ impl GuiState {
                     n.set_local_translation(scale_v3(pos_w).into());
                 })
                 .or_insert_with(|| {
-                    let mut n = self.window.add_cube(1.4, 1.4, 1.4);
+                    let mut n = self.window.add_cube(1.5, 1.5, 1.5);
                     n.set_color(SAT_ERROR_RGB[0], SAT_ERROR_RGB[1], SAT_ERROR_RGB[2]);
-                    n.set_lines_width(0.35);
+                    n.set_lines_width(0.45);
                     n.set_surface_rendering_activation(false);
                     n.set_local_translation(scale_v3(pos_w).into());
                     n

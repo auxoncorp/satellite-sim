@@ -73,6 +73,11 @@ struct Opts {
     #[arg(long)]
     time_per_step: Option<humantime::Duration>,
 
+    /// Use the provide obj file for the satellite model (e.g. '42/Model/IonCruiser.obj')
+    /// Any associated materials must reside in the parent directory of the obj file.
+    #[arg(long = "sat-model-object")]
+    sat_model: Option<PathBuf>,
+
     /// The 42 data source. This can either be an address:port combination
     /// or a file path for import mode
     #[arg(default_value = "127.0.0.1:10001")]
@@ -129,7 +134,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut sys_state = SystemSharedState::new(if opts.dev_gui {
-        Some(GuiState::new_shared("Dev GUI", opts.pause, intr.clone()))
+        Some(GuiState::new_shared(
+            "Dev GUI",
+            opts.pause,
+            intr.clone(),
+            opts.sat_model,
+        ))
     } else {
         None
     })?;
