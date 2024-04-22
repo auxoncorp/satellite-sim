@@ -1,5 +1,5 @@
 {
-  "name": "openc3-satsim-0.1.0.gem__20231110120728",
+  "name": "openc3-satsim-0.2.0.gem__20240422132025",
   "variables": {
     "cgs_iface_port": "9999",
     "cgs_iface_name": "CGS_TCP",
@@ -65,5 +65,5 @@
     "WIDGET MAPVIEWER"
   ],
   "needs_dependencies": true,
-  "updated_at": 1699618049850033008
+  "updated_at": 1713792025193358752
 }

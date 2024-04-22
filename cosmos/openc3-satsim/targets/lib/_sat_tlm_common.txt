@@ -134,6 +134,8 @@
     LIMITS DEFAULT 1 ENABLED -40.0 -20.0 20.0 40.0 -10.0 10.0
   APPEND_ITEM VISION_OUT_OF_SYNC 32 UINT "Vision subsystem - error register out-of-sync"
     KEY $.vision_status.error_register.out_of_sync
+  APPEND_ITEM VISION_STABILIZER 32 UINT "Vision subsystem - error register vision-stabilizer"
+    KEY $.vision_status.error_register.stabilizer
   #################################################
   # comms_status
   #################################################
