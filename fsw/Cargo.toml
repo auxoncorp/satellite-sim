@@ -43,6 +43,7 @@ url = { version = "2.1", features = ["serde"] }
 regex = "1.10"
 humantime = "2.1"
 ratelimit = "0.9"
+tobj = "4.0"
 
 # TODO - unfork after nalgebra 0.32 makes it in
 #kiss3d = "0.35"

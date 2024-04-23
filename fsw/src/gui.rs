@@ -1,8 +1,10 @@
 use kiss3d::{
     camera::{ArcBall, Camera},
+    context::Texture,
     event::{Action, Key, WindowEvent},
     light::Light,
-    scene::SceneNode,
+    resource::{MaterialManager, Mesh, MeshManager, TextureManager},
+    scene::{Object, SceneNode},
     text::Font,
     window::Window,
 };
@@ -56,7 +58,7 @@ pub struct GuiState {
     text_color: Point3<f32>,
     text_buf: String,
 
-    sat_model_and_mtl: Option<(PathBuf, PathBuf)>,
+    sat_model_resources: Option<ModelResources>,
 
     interruptor: Interruptor,
     paused: bool,
@@ -101,18 +103,103 @@ impl GuiState {
         interruptor: Interruptor,
         sat_model_path: Option<PathBuf>,
     ) -> Self {
-        let sat_model_and_mtl = sat_model_path.map(|p| {
-            assert!(p.exists(), "satellite model path doesn't exist");
-            let mtl_dir_path = p.parent().expect("Material parent directory");
-            (p.clone(), mtl_dir_path.to_owned())
-        });
+        let mut window = Window::new(win_title);
+
+        let sat_model_resources = if let Some(sat_model_path) = &sat_model_path {
+            let mut resources = Vec::new();
+
+            assert!(
+                sat_model_path.exists(),
+                "satellite model path doesn't exist"
+            );
+            let mtl_dir_path = sat_model_path.parent().expect("Material parent directory");
+
+            let ops = tobj::GPU_LOAD_OPTIONS;
+            let (models, materials) =
+                tobj::load_obj(sat_model_path, &ops).expect("Failed to load satellite obj");
+            let materials = materials.expect("Failed to load satellite obj materials");
+
+            assert!(models.len() > 1);
+            for (idx, model) in models.iter().enumerate() {
+                assert!(model.mesh.positions.len() % 3 == 0);
+                assert_eq!(model.mesh.positions.len(), model.mesh.normals.len());
+                assert_eq!(model.mesh.positions.len() / 3, model.mesh.indices.len());
+
+                let mesh_name = format!("sat_model_{idx}");
+                let coords = model
+                    .mesh
+                    .positions
+                    .chunks_exact(3)
+                    .map(|p| Point3::new(p[0], p[1], p[2]))
+                    .collect();
+                let faces = model
+                    .mesh
+                    .indices
+                    .chunks_exact(3)
+                    .map(|p| Point3::new(p[0] as u16, p[1] as u16, p[2] as u16))
+                    .collect();
+                let normals = model
+                    .mesh
+                    .normals
+                    .chunks_exact(3)
+                    .map(|p| Vector3::new(p[0], p[1], p[2]))
+                    .collect();
+                let uvs = if model.mesh.texcoords.is_empty() {
+                    None
+                } else {
+                    Some(
+                        model
+                            .mesh
+                            .texcoords
+                            .chunks_exact(2)
+                            .map(|p| Point2::new(p[0], p[1]))
+                            .collect(),
+                    )
+                };
+                let mesh = Mesh::new(
+                    coords,
+                    faces,
+                    Some(normals),
+                    uvs,
+                    false, /*dynamic_draw*/
+                );
+                let mesh = Rc::new(RefCell::new(mesh));
+
+                MeshManager::get_global_manager(|mm| {
+                    mm.add(mesh.clone(), &mesh_name);
+                });
+
+                let (color, texture) = if let Some(mtl_idx) = model.mesh.material_id {
+                    let mtl = materials.get(mtl_idx).unwrap();
+                    let color = mtl.diffuse.unwrap();
+                    if let Some(texture_file) = mtl.diffuse_texture.as_ref() {
+                        let p = mtl_dir_path.join(texture_file);
+                        let tex = TextureManager::get_global_manager(|tm| tm.add(&p, texture_file));
+                        (color, tex.into())
+                    } else if let Some(texture_file) = mtl.ambient_texture.as_ref() {
+                        let p = mtl_dir_path.join(texture_file);
+                        let tex = TextureManager::get_global_manager(|tm| tm.add(&p, texture_file));
+                        (color, tex.into())
+                    } else {
+                        (color, None)
+                    }
+                } else {
+                    ([1.0, 1.0, 1.0], None)
+                };
+
+                resources.push((mesh, color, texture));
+            }
+
+            Some(ModelResources(resources))
+        } else {
+            None
+        };
 
         let eye = Vector3::new(1.0, 2.0, 1.0).scale(30.0);
         let at = Point3::origin();
         let mut cam = ArcBall::new(eye.into(), at);
         cam.set_up_axis(Vector3::z());
 
-        let mut window = Window::new(win_title);
         window.set_light(Light::StickToCamera);
         window.set_framerate_limit(None);
 
@@ -168,7 +255,7 @@ impl GuiState {
             ir_event_info_visibility: true,
             mode: RenderContext::Sim,
             ratelimiter_active: true,
-            sat_model_and_mtl,
+            sat_model_resources,
             celestial_body_nodes,
             unit_sun_vector: Vector3::zeros(),
             sat_nodes: Default::default(),
@@ -489,24 +576,31 @@ impl GuiState {
         pos_w: &Vector3<f64>,
         _vel_w: &Vector3<f64>,
     ) {
-        self.sat_nodes
+        let pos = scale_v3(pos_w);
+
+        let n = self
+            .sat_nodes
             .entry(satcat_id)
             .and_modify(|n| {
                 n.set_local_translation(scale_v3(pos_w).into());
             })
             .or_insert_with(|| {
-                let mut n = if let Some(obj_and_mtl) = self.sat_model_and_mtl.as_ref() {
-                    self.window
-                        .add_obj(&obj_and_mtl.0, &obj_and_mtl.1, SAT_OBJ_SCALE)
-                } else {
-                    let mut n = self.window.add_sphere(0.32);
-                    n.set_color(SAT_NOMINAL_RGB[0], SAT_NOMINAL_RGB[1], SAT_NOMINAL_RGB[2]);
-                    n
-                };
-
-                n.set_local_translation(scale_v3(pos_w).into());
+                let mut n = create_sat_model_node(&mut self.window, &self.sat_model_resources);
+                n.set_local_translation(pos.into());
                 n
             });
+
+        if self.sat_model_resources.is_some() {
+            let alignment_rot_x =
+                UnitQuaternion::from_scaled_axis(Vector3::new(std::f32::consts::PI, 0.0, 0.0));
+            let alignment_rot_z = UnitQuaternion::from_scaled_axis(Vector3::new(
+                0.0,
+                0.0,
+                -std::f32::consts::FRAC_PI_2,
+            ));
+            let rot = UnitQuaternion::look_at_rh(&pos, &Vector3::z());
+            n.set_local_rotation(rot.inverse() * alignment_rot_x * alignment_rot_z);
+        }
 
         // Draw a red wire box around the satellite if it has any error bits set
         if has_errors {
@@ -701,4 +795,44 @@ fn scale_v3(inp: &Vector3<f64>) -> Vector3<f32> {
 
 fn scale(inp: f64) -> f32 {
     (inp / SYSTEM_SCALE) as f32
+}
+
+// Mesh, color, texture
+#[allow(clippy::type_complexity)]
+struct ModelResources(Vec<(Rc<RefCell<Mesh>>, [f32; 3], Option<Rc<Texture>>)>);
+
+fn create_sat_model_node(win: &mut Window, model_resources: &Option<ModelResources>) -> SceneNode {
+    if let Some(model_resources) = model_resources.as_ref() {
+        let alignment_iso = Isometry3 {
+            rotation: na::one(),
+            //rotation: UnitQuaternion::from_scaled_axis(Vector3::y() * std::f32::consts::FRAC_PI_2),
+            translation: na::one(),
+        };
+        let mut root_node = SceneNode::new(SAT_OBJ_SCALE, alignment_iso, None);
+        let def_mtl = MaterialManager::get_global_manager(|mm| mm.get_default());
+        let def_tex = TextureManager::get_global_manager(|tm| tm.get_default());
+
+        for (mesh, color, texture) in model_resources.0.iter() {
+            let mut object = Object::new(
+                mesh.clone(),
+                1.0,
+                1.0,
+                1.0,
+                def_tex.clone(),
+                def_mtl.clone(),
+            );
+            object.set_color(color[0], color[1], color[2]);
+            if let Some(tex) = texture {
+                object.set_texture(tex.clone());
+            }
+            let _ = root_node.add_object(Vector3::from_element(1.0), na::one(), object);
+        }
+
+        win.scene_mut().add_child(root_node.clone());
+        root_node
+    } else {
+        let mut n = win.add_sphere(0.32);
+        n.set_color(SAT_NOMINAL_RGB[0], SAT_NOMINAL_RGB[1], SAT_NOMINAL_RGB[2]);
+        n
+    }
 }
