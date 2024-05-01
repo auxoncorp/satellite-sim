@@ -5,6 +5,7 @@ edition = "2021"
 default-run = "fsw"
 license = "Apache-2.0"
 repository = "https://github.com/auxoncorp/satellite-sim"
+build = "build.rs"
 
 [[bin]]
 name = "fsw"
@@ -50,6 +51,10 @@ tobj = "4.0"
 [dependencies.kiss3d]
 git = "https://github.com/auxoncorp/kiss3d.git"
 branch = "update-nalgebra"
+
+[build-dependencies.built]
+version = "0.7"
+features = ["git2", "chrono"]
 
 [dev-dependencies]
 approx = "0.5"

@@ -25,6 +25,10 @@ use crate::satellite::SatelliteId;
 use crate::sim_info::SimulationInfo;
 use crate::units::Timestamp;
 
+mod built_info {
+    include!(concat!(env!("OUT_DIR"), "/built.rs"));
+}
+
 const MUTATION_PROTOCOL_PARENT_URL_ENV_VAR: &str = "MUTATION_PROTOCOL_PARENT_URL";
 const MUTATION_PROTOCOL_PARENT_URL_DEFAULT: &str = "modality-mutation://127.0.0.1:14192";
 const MUTATION_PLANE_POLL_TIMEOUT_ENV_VAR: &str = "MODALITY_MUTATION_PLANE_TIMEOUT";
@@ -766,6 +770,14 @@ impl TimelineClient {
                 ("event.sim.fsw_step".to_string(), AttrVal::Bool(false)),
                 ("event.system.timestamp".to_string(), AttrVal::Bool(false)),
                 ("timeline.run_id".to_string(), AttrVal::Bool(false)),
+                (
+                    "timeline.satsim.git_commit".to_string(),
+                    AttrVal::Bool(false),
+                ),
+                (
+                    "timeline.satsim.build_date".to_string(),
+                    AttrVal::Bool(false),
+                ),
             ])
             .await?;
 
@@ -800,9 +812,22 @@ impl TimelineClient {
         let run_id_key = self
             .interned_attr_keys
             .get(&"timeline.run_id".to_string().into())
-            .expect("get event.system.timestamp attr key, declared in connect");
-
+            .expect("get timeline.run_id attr key, declared in connect");
         attrs.push((*run_id_key, self.run_id.to_string().into()));
+
+        if let Some(gc) = built_info::GIT_COMMIT_HASH {
+            let key = self
+                .interned_attr_keys
+                .get(&"timeline.satsim.git_commit".to_string().into())
+                .expect("get timeline.satsim.git_commit attr key, declared in connect");
+            attrs.push((*key, gc.to_string().into()));
+        }
+
+        let bd_key = self
+            .interned_attr_keys
+            .get(&"timeline.satsim.build_date".to_string().into())
+            .expect("get timeline.satsim.build_date attr key, declared in connect");
+        attrs.push((*bd_key, built_info::BUILT_TIME_UTC.to_string().into()));
     }
 
     fn append_default_event_attrs(&mut self, attrs: &mut Vec<(InternedAttrKey, AttrVal)>) {
